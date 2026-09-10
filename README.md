@@ -57,9 +57,14 @@ static bundle).
 ## Checks
 
 ```bash
-npm run typecheck     # tsc, strict + noUncheckedIndexedAccess, client and server
-node scripts/smoke.ts # data-layer assertions against the fixtures, no deps needed
+npm run check         # all three of the below
+npm run typecheck     # tsc -b: client, server and scripts projects
+npm run check:data    # data-layer assertions against the fixtures
+npm run check:render  # renders the real components with real derived data
 ```
+
+`check:data` needs no dependencies at all -- `node scripts/smoke.ts` runs it
+directly, since Node strips the types natively.
 
 ## Layout
 

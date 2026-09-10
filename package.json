@@ -12,9 +12,10 @@
     "dev:client": "vite",
     "build": "vite build",
     "start": "NODE_ENV=production node --env-file-if-exists=.env src/server/index.ts",
-    "typecheck": "npm run typecheck:client && npm run typecheck:server",
-    "typecheck:client": "tsc -p tsconfig.client.json",
-    "typecheck:server": "tsc -p tsconfig.server.json"
+    "typecheck": "tsc -b tsconfig.json",
+    "check": "npm run typecheck && npm run check:data && npm run check:render",
+    "check:data": "node scripts/smoke.ts",
+    "check:render": "vite build --config vite.render-check.config.ts && node node_modules/.tmp/render/render-check.js"
   },
   "dependencies": {
     "express": "^4.21.2",
