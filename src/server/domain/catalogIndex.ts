@@ -14,11 +14,26 @@ export interface CatalogIndex {
   catalog: Catalog;
   objectTypeById: ReadonlyMap<ObjectTypeId, ObjectType>;
   lifeCycleById: ReadonlyMap<LifeCycleId, LifeCycle>;
+  /**
+   * Which object types a lifecycle belongs to.
+   *
+   * Inverted from `ObjectType.lifeCycleIds` -- deliberately the *same* merged
+   * bindings that coverage totals are measured against, so a grant's numerator
+   * and denominator can never come from different sources. A lifecycle can map
+   * to more than one object type when two object types point at it.
+   */
+  objectTypeIdsByLifeCycle: ReadonlyMap<LifeCycleId, ObjectTypeId[]>;
   /** Total states across every lifecycle bound to an object type. */
   totalStatesByObjectType: ReadonlyMap<ObjectTypeId, number>;
+  /**
+   * False when the catalog came back with no lifecycle states at all, which
+   * means the upstream payload did not carry them and state-level access
+   * cannot be shown. Surfaced rather than silently rendering "0/0 states".
+   */
+  statesAvailable: boolean;
 }
 
-/** O(objectTypes + lifeCycles). */
+/** O(objectTypes + lifeCycles + bindings). */
 export function buildCatalogIndex(catalog: Catalog): CatalogIndex {
   const objectTypeById = new Map<ObjectTypeId, ObjectType>();
   for (const objectType of catalog.objectTypes) {
@@ -30,14 +45,34 @@ export function buildCatalogIndex(catalog: Catalog): CatalogIndex {
     lifeCycleById.set(lifeCycle.id, lifeCycle);
   }
 
+  const objectTypeIdsByLifeCycle = new Map<LifeCycleId, ObjectTypeId[]>();
   const totalStatesByObjectType = new Map<ObjectTypeId, number>();
+
   for (const objectType of catalog.objectTypes) {
     let total = 0;
     for (const lifeCycleId of objectType.lifeCycleIds) {
       total += lifeCycleById.get(lifeCycleId)?.states.length ?? 0;
+
+      const owners = objectTypeIdsByLifeCycle.get(lifeCycleId);
+      if (owners === undefined) {
+        objectTypeIdsByLifeCycle.set(lifeCycleId, [objectType.id]);
+      } else {
+        owners.push(objectType.id);
+      }
     }
     totalStatesByObjectType.set(objectType.id, total);
   }
 
-  return { catalog, objectTypeById, lifeCycleById, totalStatesByObjectType };
+  const statesAvailable =
+    catalog.lifeCycles.length === 0 ||
+    catalog.lifeCycles.some((lifeCycle) => lifeCycle.states.length > 0);
+
+  return {
+    catalog,
+    objectTypeById,
+    lifeCycleById,
+    objectTypeIdsByLifeCycle,
+    totalStatesByObjectType,
+    statesAvailable,
+  };
 }

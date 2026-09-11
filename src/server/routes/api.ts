@@ -27,7 +27,18 @@ function asyncRoute(
   };
 }
 
-export function createApiRouter(repository: MatrixRepository): express.Router {
+export interface ApiRouterOptions {
+  /**
+   * Cache invalidation forces a full re-fetch (3 + 2 + one call per role), so
+   * it is only mounted where that cannot be triggered by a stranger.
+   */
+  exposeCacheControl: boolean;
+}
+
+export function createApiRouter(
+  repository: MatrixRepository,
+  options: ApiRouterOptions,
+): express.Router {
   const router = express.Router();
 
   router.get('/meta', (_req, res) => {
@@ -58,9 +69,17 @@ export function createApiRouter(repository: MatrixRepository): express.Router {
     }),
   );
 
-  router.post('/cache/clear', (_req, res) => {
-    repository.clearCaches();
-    res.json({ cleared: true });
+  if (options.exposeCacheControl) {
+    router.post('/cache/clear', (_req, res) => {
+      repository.clearCaches();
+      res.json({ cleared: true });
+    });
+  }
+
+  // Terminal: anything under /api that matched no route above is a 404 in the
+  // JSON error contract, never Express's HTML page and never the SPA shell.
+  router.use((req, _res, next) => {
+    next(new NotFoundError(`No API route matches ${req.method} /api${req.path}`));
   });
 
   return router;

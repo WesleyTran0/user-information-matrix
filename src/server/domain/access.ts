@@ -29,16 +29,28 @@ import type { CatalogIndex } from './catalogIndex.ts';
  * belonging to a non-granted lifecycle of the same object type are not. That is
  * the inference, and it is reported to the client in `DerivationNote`.
  */
-export const DERIVATION_NOTE: DerivationNote = {
-  method: 'lifecycle-grant-implies-all-states',
-  summary:
-    'Access is granted per object lifecycle, not per state. Every state of a granted lifecycle is shown as reachable; states of a non-granted lifecycle on the same object type are not.',
-  caveats: [
-    'The API exposes no per-state permission endpoint, so state-level access is inferred from the lifecycle grant.',
-    'Access verbs (read / edit / delete) are not exposed by these endpoints and are therefore not shown.',
-    'An object type can own several lifecycles; partial coverage means only some of them are granted.',
-  ],
-};
+const BASE_CAVEATS: readonly string[] = [
+  'The API exposes no per-state permission endpoint, so state-level access is inferred from the lifecycle grant.',
+  'Access verbs (read / edit / delete) are not exposed by these endpoints and are therefore not shown.',
+  'An object type can own several lifecycles; partial coverage means only some of them are granted.',
+  'Object type <-> lifecycle association is itself merged from two upstream pointers (objectType.objectLifeCycleId and objectLifeCycle.objectTypeId), which do not always agree. Coverage is measured against that merged set.',
+];
+
+const NO_STATES_CAVEAT =
+  'This catalog returned no lifecycle states, so state-level detail is unavailable and every granted lifecycle shows 0 states. Check that the upstream honoured includeStates=true.';
+
+/**
+ * Describes how the access shown was derived. Travels with every GroupMatrix
+ * so the UI can state the inference instead of implying the API reported it.
+ */
+export function buildDerivationNote(statesAvailable: boolean): DerivationNote {
+  return {
+    method: 'lifecycle-grant-implies-all-states',
+    summary:
+      'Access is granted per object lifecycle, not per state. Every state of a granted lifecycle is shown as reachable; states of a non-granted lifecycle on the same object type are not.',
+    caveats: statesAvailable ? [...BASE_CAVEATS] : [NO_STATES_CAVEAT, ...BASE_CAVEATS],
+  };
+}
 
 function coverageOf(grantedCount: number, totalCount: number): AccessCoverage {
   if (grantedCount === 0) return 'none';
@@ -51,31 +63,36 @@ function coverageOf(grantedCount: number, totalCount: number): AccessCoverage {
  * Complexity is O(G + sum of lifecycles on the touched object types), where G
  * is the number of grants -- linear in the data the role actually reaches, not
  * in the size of the catalog.
+ *
+ * `grantsError` is set when the role's grants could not be fetched; the role
+ * then renders with no access and an explicit error rather than looking empty.
  */
 export function buildRoleAccess(
   index: CatalogIndex,
   role: Role,
   grantedLifeCycleIds: readonly LifeCycleId[],
+  grantsError: string | null = null,
 ): RoleAccess {
   const grantedSet = new Set(grantedLifeCycleIds);
   const grantedByObjectType = new Map<ObjectTypeId, LifeCycleId[]>();
   const unresolvedLifeCycleIds: LifeCycleId[] = [];
 
   for (const lifeCycleId of grantedSet) {
-    const lifeCycle = index.lifeCycleById.get(lifeCycleId);
-    if (lifeCycle === undefined || lifeCycle.objectTypeId === null) {
+    // Attribution goes through the same merged bindings that coverage totals
+    // use, so a grant can never be counted against a denominator it is not
+    // part of. A lifecycle owned by two object types grants access to both.
+    const owners = index.objectTypeIdsByLifeCycle.get(lifeCycleId);
+    if (owners === undefined || owners.length === 0) {
       unresolvedLifeCycleIds.push(lifeCycleId);
       continue;
     }
-    if (!index.objectTypeById.has(lifeCycle.objectTypeId)) {
-      unresolvedLifeCycleIds.push(lifeCycleId);
-      continue;
-    }
-    const bucket = grantedByObjectType.get(lifeCycle.objectTypeId);
-    if (bucket === undefined) {
-      grantedByObjectType.set(lifeCycle.objectTypeId, [lifeCycleId]);
-    } else {
-      bucket.push(lifeCycleId);
+    for (const objectTypeId of owners) {
+      const bucket = grantedByObjectType.get(objectTypeId);
+      if (bucket === undefined) {
+        grantedByObjectType.set(objectTypeId, [lifeCycleId]);
+      } else {
+        bucket.push(lifeCycleId);
+      }
     }
   }
 
@@ -106,7 +123,7 @@ export function buildRoleAccess(
   objectTypes.sort((a, b) => a.name.localeCompare(b.name));
   unresolvedLifeCycleIds.sort((a, b) => a - b);
 
-  return { role, objectTypes, unresolvedLifeCycleIds };
+  return { role, objectTypes, unresolvedLifeCycleIds, grantsError };
 }
 
 /**

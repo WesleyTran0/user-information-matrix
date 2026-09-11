@@ -136,10 +136,16 @@ export interface RoleAccess {
   objectTypes: ObjectTypeAccess[];
   /**
    * Granted lifecycle ids that could not be attributed to an object type
-   * (unknown id, or objectTypeId was null upstream). Surfaced rather than
+   * (unknown id, or bound to no object type upstream). Surfaced rather than
    * silently dropped so data gaps stay visible.
    */
   unresolvedLifeCycleIds: LifeCycleId[];
+  /**
+   * Set when this role's grants could not be fetched. The role then carries no
+   * access rather than an empty-looking one, and the rest of the group still
+   * renders -- one failing role does not take down the whole view.
+   */
+  grantsError: string | null;
 }
 
 export interface GroupMatrix {
@@ -180,6 +186,11 @@ export interface ServerMeta {
   catalogLoadedAt: string | null;
   upstreamCallCount: number;
   cachedRolePermissionCount: number;
+  /**
+   * False when the catalog carried no lifecycle states at all -- the app then
+   * cannot show state-level access, and says so instead of rendering 0/0.
+   */
+  lifeCycleStatesAvailable: boolean | null;
 }
 
 export interface ApiErrorBody {

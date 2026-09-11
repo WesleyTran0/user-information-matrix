@@ -148,7 +148,12 @@ export function buildCatalog(
     description: trimOrNull(raw.description),
     monogram: trimOrNull(raw.monogram),
     color: trimOrNull(raw.color),
-    primaryLifeCycleId: raw.objectLifeCycleId,
+    // Null rather than a dangling id when the pointed-at lifecycle is absent
+    // from the catalog -- the same condition that excludes it from lifeCycleIds.
+    primaryLifeCycleId:
+      raw.objectLifeCycleId !== null && knownLifeCycleIds.has(raw.objectLifeCycleId)
+        ? raw.objectLifeCycleId
+        : null,
     lifeCycleIds: [...(lifeCycleIdsByObjectType.get(raw.id) ?? [])].sort((a, b) => a - b),
     isLibraryObjectType: raw.isLibraryObjectType,
   }));

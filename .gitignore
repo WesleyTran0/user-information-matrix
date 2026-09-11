@@ -1,5 +1,4 @@
 node_modules/
-commits/
 dist/
 .env
 .env.local

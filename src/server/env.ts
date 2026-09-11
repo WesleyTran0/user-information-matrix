@@ -14,7 +14,8 @@ export interface ServerConfig {
 function readInt(name: string, fallback: number): number {
   const raw = process.env[name];
   if (raw === undefined || raw.trim() === '') return fallback;
-  const parsed = Number.parseInt(raw, 10);
+  // parseInt would accept "8787abc"; require the whole value to be digits.
+  const parsed = /^\d+$/.test(raw.trim()) ? Number.parseInt(raw.trim(), 10) : Number.NaN;
   if (!Number.isFinite(parsed) || parsed <= 0) {
     throw new Error(`${name} must be a positive integer, received "${raw}"`);
   }

@@ -16,7 +16,7 @@ interface RoleCardProps {
 }
 
 export function RoleCard({ entry, expanded, onToggle, selection, onSelect }: RoleCardProps) {
-  const { role, objectTypes, unresolvedLifeCycleIds } = entry;
+  const { role, objectTypes, unresolvedLifeCycleIds, grantsError } = entry;
   const panelId = `role-panel-${role.id}`;
 
   return (
@@ -32,7 +32,9 @@ export function RoleCard({ entry, expanded, onToggle, selection, onSelect }: Rol
         <span className="role-card__name">{role.name}</span>
         {role.isGlobal && <span className="chip chip--global">global</span>}
         <span className="role-card__count">
-          {objectTypes.length} {objectTypes.length === 1 ? 'object type' : 'object types'}
+          {entry.grantsError !== null
+            ? 'unavailable'
+            : `${objectTypes.length} ${objectTypes.length === 1 ? 'object type' : 'object types'}`}
         </span>
       </button>
 
@@ -40,10 +42,19 @@ export function RoleCard({ entry, expanded, onToggle, selection, onSelect }: Rol
         <div className="role-card__body" id={panelId}>
           {role.description !== null && <p className="role-card__description">{role.description}</p>}
 
-          {objectTypes.length === 0 ? (
-            <p className="muted">
-              This role has no object lifecycle grants, so it reaches no object types.
+          {grantsError !== null && (
+            <p className="warning">
+              Permissions for this role could not be loaded, so nothing is shown below.
+              Reloading retries it. ({grantsError})
             </p>
+          )}
+
+          {objectTypes.length === 0 ? (
+            grantsError === null && (
+              <p className="muted">
+                This role has no object lifecycle grants, so it reaches no object types.
+              </p>
+            )
           ) : (
             <ul className="object-type-list">
               {objectTypes.map((objectType) => {

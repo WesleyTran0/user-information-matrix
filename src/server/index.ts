@@ -29,7 +29,9 @@ function main(): void {
   const app = express();
   app.disable('x-powered-by');
   app.use(express.json());
-  app.use('/api', createApiRouter(repository));
+  // Cache invalidation stays off in production: it is unauthenticated and
+  // forces a full upstream re-fetch.
+  app.use('/api', createApiRouter(repository, { exposeCacheControl: !config.isProduction }));
 
   if (config.isProduction) {
     // Vite's build output; `npm run build` must have run first.
@@ -42,13 +44,24 @@ function main(): void {
 
   app.use(apiErrorHandler);
 
-  app.listen(config.port, () => {
+  const server = app.listen(config.port, () => {
     console.log(
       `[server] listening on http://localhost:${config.port} (data source: ${config.dataSource})`,
     );
     if (!config.isProduction) {
       console.log('[server] run `npm run dev:client` for the UI on http://localhost:5173');
     }
+  });
+
+  // listen() reports EADDRINUSE asynchronously, so the try/catch around main()
+  // would never see it.
+  server.on('error', (error: NodeJS.ErrnoException) => {
+    const detail =
+      error.code === 'EADDRINUSE'
+        ? `port ${config.port} is already in use (set PORT to something else)`
+        : error.message;
+    console.error(`[server] failed to start: ${detail}`);
+    process.exitCode = 1;
   });
 }
 

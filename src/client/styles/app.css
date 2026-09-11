@@ -150,6 +150,7 @@ body {
 .chip--admin { background: var(--accent-soft); color: var(--accent); }
 .chip--global { background: var(--accent-soft); color: var(--accent); }
 .chip--live { background: var(--granted-soft); color: var(--granted); }
+.chip--warn { background: var(--warning-soft); color: var(--warning); }
 
 .badge {
   display: inline-block;

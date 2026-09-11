@@ -8,6 +8,16 @@
  */
 import { MatrixRepository } from '../src/server/data/repository.ts';
 import { MockResolverSource } from '../src/server/data/mockSource.ts';
+import type { ResolverDataSource } from '../src/server/data/source.ts';
+import type {
+  ApiGroupRole,
+  ApiKeyedByGroupId,
+  ApiObjectLifeCycle,
+  ApiObjectType,
+  ApiRoleLifeCyclePermission,
+  ApiUser,
+  ApiUserGroup,
+} from '../src/shared/types/resolver-api.ts';
 
 let failures = 0;
 
@@ -104,6 +114,229 @@ const missing = await repository.getGroupMatrix(999999).then(
   (error: unknown) => (error instanceof Error ? error.name : 'unknown'),
 );
 check('unknown group rejects with NotFoundError', missing === 'NotFoundError', missing);
+
+/* -------------------------------------------------------------------------- */
+/* Regression cases: the object-type <-> lifecycle pointers disagree upstream, */
+/* so grant attribution and coverage totals must read the same merged set.     */
+/* -------------------------------------------------------------------------- */
+
+/** Minimal source driven by whatever shapes a case needs. */
+function sourceOf(parts: {
+  objectTypes: ApiObjectType[];
+  lifeCycles: ApiObjectLifeCycle[];
+  grants: Record<number, ApiRoleLifeCyclePermission[]>;
+  roles?: ApiGroupRole[];
+  failRoleIds?: number[];
+}): ResolverDataSource {
+  const roles = parts.roles ?? [buildRole(900)];
+  const failRoleIds = new Set(parts.failRoleIds ?? []);
+  return {
+    kind: 'mock',
+    callCount: 0,
+    async fetchUserGroups(): Promise<ApiUserGroup[]> {
+      return [
+        {
+          id: 1,
+          name: 'Case Group',
+          description: null,
+          created: 'x',
+          modified: 'x',
+          createdBy: null,
+          modifiedBy: null,
+          org: 1,
+          externalRefId: 'g1',
+          scimdisplayname: null,
+          numberOfUsers: '0',
+        },
+      ];
+    },
+    async fetchGroupRoles(): Promise<ApiKeyedByGroupId<ApiGroupRole[]>> {
+      return { '1': roles };
+    },
+    async fetchGroupUsers(): Promise<ApiKeyedByGroupId<ApiUser[]>> {
+      return { '1': [] };
+    },
+    async fetchObjectLifeCycles(): Promise<ApiObjectLifeCycle[]> {
+      return parts.lifeCycles;
+    },
+    async fetchObjectTypes(): Promise<ApiObjectType[]> {
+      return parts.objectTypes;
+    },
+    async fetchRoleLifeCyclePermissions(roleId: number): Promise<ApiRoleLifeCyclePermission[]> {
+      if (failRoleIds.has(roleId)) throw new Error(`upstream 403 for role ${roleId}`);
+      return parts.grants[roleId] ?? [];
+    },
+  };
+}
+
+function buildRole(id: number): ApiGroupRole {
+  return {
+    id,
+    name: `Role ${id}`,
+    description: null,
+    isGlobal: false,
+    created: 'x',
+    modified: 'x',
+    org: 1,
+    externalRefId: `r${id}`,
+  };
+}
+
+function buildLifeCycle(
+  id: number,
+  objectTypeId: number | null,
+  stateCount: number,
+): ApiObjectLifeCycle {
+  return {
+    id,
+    name: `LifeCycle ${id}`,
+    type: 1,
+    nameKey: null,
+    description: null,
+    descriptionKey: null,
+    created: 'x',
+    modified: 'x',
+    org: 1,
+    nextStateOrdinal: stateCount,
+    externalRefId: `lc${id}`,
+    objectTypeId,
+    isSystemConfig: false,
+    states: Array.from({ length: stateCount }, (_unused, ordinal) => ({
+      id: id * 100 + ordinal,
+      name: `S${ordinal}`,
+      ordinal,
+    })),
+  };
+}
+
+function buildObjectType(id: number, objectLifeCycleId: number | null): ApiObjectType {
+  return {
+    id,
+    name: `Type ${id}`,
+    pluralName: null,
+    description: null,
+    monogram: null,
+    nameKey: null,
+    descriptionKey: null,
+    pluralNameKey: null,
+    monogramKey: null,
+    color: null,
+    objectLifeCycleId,
+    externalRefId: `ot${id}`,
+    created: 'x',
+    modified: 'x',
+    nextElement: 1,
+    org: 1,
+    assessment: false,
+    anchor: null,
+    anchorRelationship: null,
+    dataDefinitionId: null,
+    retentionEnabled: false,
+    isSystemConfig: false,
+    isLibraryObjectType: false,
+  };
+}
+
+console.log('\nregression: object type points at a lifecycle that points back at nothing');
+{
+  // ObjectType(10) -> LifeCycle(500), but LifeCycle(500).objectTypeId is null.
+  const repo = new MatrixRepository(
+    sourceOf({
+      objectTypes: [buildObjectType(10, 500)],
+      lifeCycles: [buildLifeCycle(500, null, 3)],
+      grants: { 900: [{ objectLifeCycleId: 500 }] },
+    }),
+    60_000,
+    6,
+  );
+  const caseMatrix = await repo.getGroupMatrix(1);
+  const role = caseMatrix.roles[0];
+  const summaryCoverage = role?.objectTypes[0]?.coverage ?? 'absent';
+  const drill = await repo.getObjectTypeDetail(900, 10);
+  check(
+    'summary attributes the grant to the object type',
+    summaryCoverage === 'full',
+    { summaryCoverage, unresolved: role?.unresolvedLifeCycleIds },
+  );
+  check('summary and drill-down agree', summaryCoverage === drill.coverage, {
+    summary: summaryCoverage,
+    detail: drill.coverage,
+  });
+  check('nothing is reported unresolved', role?.unresolvedLifeCycleIds.length === 0);
+}
+
+console.log('\nregression: two object types point at one lifecycle');
+{
+  const repo = new MatrixRepository(
+    sourceOf({
+      objectTypes: [buildObjectType(20, null), buildObjectType(21, 600)],
+      lifeCycles: [buildLifeCycle(600, 20, 2)],
+      grants: { 900: [{ objectLifeCycleId: 600 }] },
+    }),
+    60_000,
+    6,
+  );
+  const caseMatrix = await repo.getGroupMatrix(1);
+  const names = (caseMatrix.roles[0]?.objectTypes ?? []).map((entry) => entry.name).sort();
+  check('both owners are listed', names.join(',') === 'Type 20,Type 21', names);
+  check('object type reach counts both', caseMatrix.objectTypeReach === 2, caseMatrix.objectTypeReach);
+  const drill = await repo.getObjectTypeDetail(900, 21);
+  check('the second owner drills down as full, not partial', drill.coverage === 'full', drill.coverage);
+}
+
+console.log('\nregression: a role whose grants fail does not take down the group');
+{
+  const repo = new MatrixRepository(
+    sourceOf({
+      objectTypes: [buildObjectType(30, 700)],
+      lifeCycles: [buildLifeCycle(700, 30, 2)],
+      grants: { 900: [{ objectLifeCycleId: 700 }], 901: [] },
+      roles: [buildRole(900), buildRole(901)],
+      failRoleIds: [901],
+    }),
+    60_000,
+    6,
+  );
+  const caseMatrix = await repo.getGroupMatrix(1);
+  check('the group still renders', caseMatrix.roles.length === 2);
+  check('the healthy role keeps its access', caseMatrix.roles[0]?.objectTypes.length === 1);
+  check(
+    'the failing role reports why',
+    caseMatrix.roles[1]?.grantsError?.includes('403') === true,
+    caseMatrix.roles[1]?.grantsError,
+  );
+}
+
+console.log('\nregression: catalog without states says so');
+{
+  const repo = new MatrixRepository(
+    sourceOf({
+      objectTypes: [buildObjectType(40, 800)],
+      lifeCycles: [buildLifeCycle(800, 40, 0)],
+      grants: { 900: [{ objectLifeCycleId: 800 }] },
+    }),
+    60_000,
+    6,
+  );
+  const caseMatrix = await repo.getGroupMatrix(1);
+  check(
+    'the derivation note flags the missing states',
+    caseMatrix.derivation.caveats[0]?.includes('no lifecycle states') === true,
+    caseMatrix.derivation.caveats[0],
+  );
+  check('meta flags it too', repo.meta().lifeCycleStatesAvailable === false);
+}
+
+console.log('\nregression: unknown role ids are rejected, not fetched');
+{
+  const repo = new MatrixRepository(new MockResolverSource(), 60_000, 6);
+  const outcome = await repo.getObjectTypeDetail(111111, 450001).then(
+    () => 'resolved',
+    (error: unknown) => (error instanceof Error ? error.name : 'unknown'),
+  );
+  check('a role in no group is a 404', outcome === 'NotFoundError', outcome);
+  check('and it did not occupy a cache slot', repo.meta().cachedRolePermissionCount === 0);
+}
 
 console.log(`\n${failures === 0 ? 'PASS' : `FAIL (${failures})`}`);
 process.exit(failures === 0 ? 0 : 1);

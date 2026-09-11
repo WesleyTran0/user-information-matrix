@@ -16,7 +16,11 @@ import { TtlCache } from '../http/cache.ts';
 import { mapWithConcurrency } from '../http/concurrency.ts';
 import { buildCatalogIndex, type CatalogIndex } from '../domain/catalogIndex.ts';
 import { buildCatalog, normalizeRole, normalizeUser, normalizeUserGroup } from '../domain/normalize.ts';
-import { DERIVATION_NOTE, buildObjectTypeAccessDetail, buildRoleAccess } from '../domain/access.ts';
+import {
+  buildDerivationNote,
+  buildObjectTypeAccessDetail,
+  buildRoleAccess,
+} from '../domain/access.ts';
 import type { ResolverDataSource } from './source.ts';
 
 /** Raised when a caller asks for something the dataset does not contain. */
@@ -32,6 +36,8 @@ interface GroupBundle {
   groups: UserGroup[];
   rolesByGroupId: Map<GroupId, Role[]>;
   usersByGroupId: Map<GroupId, User[]>;
+  /** Every role id reachable through some group; guards the drill-down route. */
+  knownRoleIds: Set<RoleId>;
 }
 
 interface CachedCatalog {
@@ -57,6 +63,7 @@ export class MatrixRepository {
   readonly #rolePermissionCache: TtlCache<LifeCycleId[]>;
   readonly #maxConcurrency: number;
   #catalogLoadedAt: string | null = null;
+  #statesAvailable: boolean | null = null;
 
   constructor(source: ResolverDataSource, cacheTtlMs: number, maxConcurrency: number) {
     this.#source = source;
@@ -72,6 +79,7 @@ export class MatrixRepository {
       catalogLoadedAt: this.#catalogLoadedAt,
       upstreamCallCount: this.#source.callCount,
       cachedRolePermissionCount: this.#rolePermissionCache.size,
+      lifeCycleStatesAvailable: this.#statesAvailable,
     };
   }
 
@@ -80,6 +88,7 @@ export class MatrixRepository {
     this.#groupCache.clear();
     this.#rolePermissionCache.clear();
     this.#catalogLoadedAt = null;
+    this.#statesAvailable = null;
   }
 
   /** 2 upstream calls, then cached. */
@@ -93,6 +102,7 @@ export class MatrixRepository {
       return { index, loadedAt: new Date().toISOString() };
     });
     this.#catalogLoadedAt = cached.loadedAt;
+    this.#statesAvailable = cached.index.statesAvailable;
     return cached.index;
   }
 
@@ -125,11 +135,16 @@ export class MatrixRepository {
         );
       }
 
+      const knownRoleIds = new Set<RoleId>();
+      for (const roles of rolesByGroupId.values()) {
+        for (const role of roles) knownRoleIds.add(role.id);
+      }
+
       const groups = rawGroups
         .map(normalizeUserGroup)
         .sort((a, b) => a.name.localeCompare(b.name));
 
-      return { groups, rolesByGroupId, usersByGroupId };
+      return { groups, rolesByGroupId, usersByGroupId, knownRoleIds };
     });
   }
 
@@ -161,13 +176,23 @@ export class MatrixRepository {
     }
 
     const roles = bundle.rolesByGroupId.get(groupId) ?? [];
-    const grantsByRole = await mapWithConcurrency(roles, this.#maxConcurrency, (role) =>
-      this.#roleGrants(role.id),
-    );
 
-    const roleAccess: RoleAccess[] = roles.map((role, position) =>
-      buildRoleAccess(index, role, grantsByRole[position] ?? []),
-    );
+    // Settle per role: one role whose grants fail to load must not take down
+    // the whole group view. Failures are not cached, so a reload retries them.
+    const grantsByRole = await mapWithConcurrency(roles, this.#maxConcurrency, async (role) => {
+      try {
+        return { grants: await this.#roleGrants(role.id), error: null };
+      } catch (cause) {
+        const message = cause instanceof Error ? cause.message : String(cause);
+        console.warn(`[repository] grants unavailable for role ${role.id}: ${message}`);
+        return { grants: [] as LifeCycleId[], error: message };
+      }
+    });
+
+    const roleAccess: RoleAccess[] = roles.map((role, position) => {
+      const outcome = grantsByRole[position];
+      return buildRoleAccess(index, role, outcome?.grants ?? [], outcome?.error ?? null);
+    });
 
     const reachedObjectTypes = new Set<ObjectTypeId>();
     for (const entry of roleAccess) {
@@ -181,15 +206,26 @@ export class MatrixRepository {
       users: bundle.usersByGroupId.get(groupId) ?? [],
       roles: roleAccess,
       objectTypeReach: reachedObjectTypes.size,
-      derivation: DERIVATION_NOTE,
+      derivation: buildDerivationNote(index.statesAvailable),
     };
   }
 
-  /** Served entirely from cache once the role has been fetched -- 0 extra calls. */
+  /**
+   * Served entirely from cache once the role has been fetched -- 0 extra calls.
+   *
+   * The role id is checked against roles that actually exist in some group
+   * first (already-cached data, 0 calls). Without that, any integer a caller
+   * types would spend one upstream call and occupy a cache slot forever.
+   */
   async getObjectTypeDetail(
     roleId: RoleId,
     objectTypeId: ObjectTypeId,
   ): Promise<ObjectTypeAccessDetail> {
+    const bundle = await this.#groupBundle();
+    if (!bundle.knownRoleIds.has(roleId)) {
+      throw new NotFoundError(`Role ${roleId} was not found in any user group`);
+    }
+
     const [index, grants] = await Promise.all([this.#catalog(), this.#roleGrants(roleId)]);
     const detail = buildObjectTypeAccessDetail(index, grants, objectTypeId);
     if (detail === null) {

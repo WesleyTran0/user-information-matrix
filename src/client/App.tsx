@@ -71,6 +71,9 @@ export function App() {
             </span>
             {meta.value.upstreamCallCount} upstream {meta.value.upstreamCallCount === 1 ? 'call' : 'calls'} ·{' '}
             {meta.value.cachedRolePermissionCount} roles cached
+            {meta.value.lifeCycleStatesAvailable === false && (
+              <span className="chip chip--warn">no lifecycle states</span>
+            )}
           </p>
         )}
       </header>
