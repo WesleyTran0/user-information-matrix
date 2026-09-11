@@ -189,13 +189,69 @@ function toPermissionLevel(raw: number): PermissionLevel {
   }
 }
 
-/** Indexes the permission rows by state id. O(rows + triggers). */
+/**
+ * The permission rows, indexed by state id, plus what it took to get there.
+ *
+ * `rowCount` matters: the caller can only attach rows to states the catalog
+ * knows about, so comparing it against the number attached is the only way to
+ * notice that real reported access was dropped on the floor.
+ */
+export interface NormalizedStatePermissions {
+  byStateId: Map<LifeCycleStateId, StatePermission>;
+  /** Rows the endpoint returned, before any matching. */
+  rowCount: number;
+  /** Which lifecycle each row claimed, for diagnosing unmatched rows. */
+  lifeCycleIdByStateId: Map<LifeCycleStateId, number>;
+  /** Rows folded into an existing state because the state repeated. */
+  duplicateCount: number;
+}
+
+/** Ranks levels so colliding rows can be reduced to the most permissive. */
+const LEVEL_RANK: Record<PermissionLevel, number> = {
+  none: 0,
+  read: 1,
+  'read-write': 2,
+  // An unrecognised level outranks nothing; it is surfaced, not compared.
+  unknown: -1,
+};
+
+function mergePermissions(left: StatePermission, right: StatePermission): StatePermission {
+  const keep = LEVEL_RANK[right.level] > LEVEL_RANK[left.level] ? right : left;
+  return {
+    level: keep.level,
+    rawLevel: keep.rawLevel,
+    // Capabilities and triggers are additive: holding either row's capability
+    // means holding it in that state.
+    capabilities: {
+      canCreate: left.capabilities.canCreate || right.capabilities.canCreate,
+      canDelete: left.capabilities.canDelete || right.capabilities.canDelete,
+      canMerge: left.capabilities.canMerge || right.capabilities.canMerge,
+      canManageRole: left.capabilities.canManageRole || right.capabilities.canManageRole,
+      canBulkLaunch: left.capabilities.canBulkLaunch || right.capabilities.canBulkLaunch,
+    },
+    triggerIds: [...new Set([...left.triggerIds, ...right.triggerIds])].sort((a, b) => a - b),
+    formId: keep.formId,
+  };
+}
+
+/**
+ * Indexes the permission rows by state id. O(rows + triggers).
+ *
+ * One row per state was observed against the live API, but the payload carries
+ * a `formId`, which hints rows could be keyed per (state, form). If several
+ * arrive for one state they are merged to the most permissive level with the
+ * union of capabilities and triggers, and counted -- silently keeping whichever
+ * row happened to be last would understate access.
+ */
 export function normalizeStatePermissions(
   rows: readonly ApiRolePermissionRow[],
-): Map<LifeCycleStateId, StatePermission> {
+): NormalizedStatePermissions {
   const byStateId = new Map<LifeCycleStateId, StatePermission>();
+  const lifeCycleIdByStateId = new Map<LifeCycleStateId, number>();
+  let duplicateCount = 0;
+
   for (const row of rows) {
-    byStateId.set(row.objectLifeCycleStateId, {
+    const permission: StatePermission = {
       level: toPermissionLevel(row.permission),
       rawLevel: row.permission,
       capabilities: {
@@ -208,17 +264,28 @@ export function normalizeStatePermissions(
       // Only rows that have any triggers carry the array at all.
       triggerIds: (row.triggers ?? []).map((trigger) => trigger.triggerId),
       formId: row.formId,
-    });
+    };
+
+    const existing = byStateId.get(row.objectLifeCycleStateId);
+    if (existing === undefined) {
+      byStateId.set(row.objectLifeCycleStateId, permission);
+    } else {
+      duplicateCount += 1;
+      byStateId.set(row.objectLifeCycleStateId, mergePermissions(existing, permission));
+    }
+    lifeCycleIdByStateId.set(row.objectLifeCycleStateId, row.objectLifeCycleId);
   }
-  return byStateId;
+
+  return { byStateId, rowCount: rows.length, lifeCycleIdByStateId, duplicateCount };
 }
 
 /**
  * Collapses the requirement rows into counts per state.
  *
- * `type` distinguishes the kinds: rows carrying a fieldId require a field,
- * rows carrying a roleId require a role assignment. Anything else is counted
- * separately rather than guessed at.
+ * Classified by which id the row populates -- a fieldId means a required
+ * field, a roleId means a required role assignment -- not by the `type` code,
+ * whose full set of values is undocumented. A row can populate more than one,
+ * so the counts are not mutually exclusive and need not sum to the row count.
  */
 export function normalizeStateRequirements(
   payload: Record<string, readonly ApiStateRequiredRow[]>,
@@ -232,9 +299,11 @@ export function normalizeStateRequirements(
     let roleCount = 0;
     let otherCount = 0;
     for (const row of rows) {
+      if (row === null || row === undefined) continue;
       if (row.fieldId !== null) fieldCount += 1;
-      else if (row.roleId !== null) roleCount += 1;
-      else otherCount += 1;
+      if (row.roleId !== null) roleCount += 1;
+      // Relationship and property requirements, plus anything unrecognised.
+      if (row.fieldId === null && row.roleId === null) otherCount += 1;
     }
     byStateId.set(stateId, { fieldCount, roleCount, otherCount });
   }

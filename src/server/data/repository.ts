@@ -25,6 +25,7 @@ import {
   normalizeStateRequirements,
   normalizeUser,
   normalizeUserGroup,
+  type NormalizedStatePermissions,
 } from '../domain/normalize.ts';
 import {
   buildDerivationNote,
@@ -72,7 +73,7 @@ export class MatrixRepository {
   readonly #catalogCache: TtlCache<CachedCatalog>;
   readonly #groupCache: TtlCache<GroupBundle>;
   readonly #rolePermissionCache: TtlCache<LifeCycleId[]>;
-  readonly #statePermissionCache: TtlCache<Map<LifeCycleStateId, StatePermission>>;
+  readonly #statePermissionCache: TtlCache<NormalizedStatePermissions>;
   readonly #requirementsCache: TtlCache<Map<LifeCycleStateId, StateRequirements>>;
   readonly #maxConcurrency: number;
   #catalogLoadedAt: string | null = null;
@@ -83,7 +84,7 @@ export class MatrixRepository {
     this.#catalogCache = new TtlCache<CachedCatalog>(cacheTtlMs);
     this.#groupCache = new TtlCache<GroupBundle>(cacheTtlMs);
     this.#rolePermissionCache = new TtlCache<LifeCycleId[]>(cacheTtlMs);
-    this.#statePermissionCache = new TtlCache<Map<LifeCycleStateId, StatePermission>>(cacheTtlMs);
+    this.#statePermissionCache = new TtlCache<NormalizedStatePermissions>(cacheTtlMs);
     this.#requirementsCache = new TtlCache<Map<LifeCycleStateId, StateRequirements>>(cacheTtlMs);
     this.#maxConcurrency = maxConcurrency;
   }
@@ -95,6 +96,8 @@ export class MatrixRepository {
       upstreamCallCount: this.#source.callCount,
       cachedRolePermissionCount: this.#rolePermissionCache.size,
       lifeCycleStatesAvailable: this.#statesAvailable,
+      cachedStatePermissionCount: this.#statePermissionCache.size,
+      cachedRequirementCount: this.#requirementsCache.size,
     };
   }
 
@@ -182,7 +185,7 @@ export class MatrixRepository {
   async #statePermissions(
     roleId: RoleId,
     objectTypeId: ObjectTypeId,
-  ): Promise<Map<LifeCycleStateId, StatePermission>> {
+  ): Promise<NormalizedStatePermissions> {
     return this.#statePermissionCache.resolve(`perm:${roleId}:${objectTypeId}`, async () => {
       const rows = await this.#source.fetchRoleObjectTypePermissions(roleId, objectTypeId);
       return normalizeStatePermissions(rows);
@@ -273,35 +276,57 @@ export class MatrixRepository {
     roleId: RoleId,
     objectTypeId: ObjectTypeId,
   ): Promise<ObjectTypeAccessDetail> {
-    const bundle = await this.#groupBundle();
+    // Both existence checks run before anything is fetched, and both read
+    // already-cached data. Validating the object type only via the null return
+    // of the builder would mean spending the fetches below on an id that does
+    // not exist, and caching the result of them forever.
+    const [bundle, index] = await Promise.all([this.#groupBundle(), this.#catalog()]);
     if (!bundle.knownRoleIds.has(roleId)) {
       throw new NotFoundError(`Role ${roleId} was not found in any user group`);
     }
+    if (!index.objectTypeById.has(objectTypeId)) {
+      throw new NotFoundError(`Object type ${objectTypeId} was not found`);
+    }
 
-    const [index, grants, permissions, requirements] = await Promise.all([
-      this.#catalog(),
+    const [grants, permissions, requirements] = await Promise.all([
       this.#roleGrants(roleId),
       this.#statePermissions(roleId, objectTypeId).then(
         (value) => ({ value, error: null as string | null }),
         (cause: unknown) => ({
-          value: new Map<LifeCycleStateId, StatePermission>(),
+          value: {
+            byStateId: new Map<LifeCycleStateId, StatePermission>(),
+            rowCount: 0,
+            lifeCycleIdByStateId: new Map<LifeCycleStateId, number>(),
+            duplicateCount: 0,
+          } satisfies NormalizedStatePermissions,
           error: cause instanceof Error ? cause.message : String(cause),
         }),
       ),
-      // Requirements are supplementary; their absence is not worth surfacing.
-      this.#stateRequirements(objectTypeId).catch(
-        () => new Map<LifeCycleStateId, StateRequirements>(),
+      // A requirements failure does not fail the page, but it is recorded:
+      // an empty cell would otherwise read as "nothing is required".
+      this.#stateRequirements(objectTypeId).then(
+        (value) => ({ value, error: null as string | null }),
+        (cause: unknown) => ({
+          value: new Map<LifeCycleStateId, StateRequirements>(),
+          error: cause instanceof Error ? cause.message : String(cause),
+        }),
       ),
     ]);
 
     const reported: ReportedPermissions = {
-      byStateId: permissions.value,
-      requirementsByStateId: requirements,
+      byStateId: permissions.value.byStateId,
+      requirementsByStateId: requirements.value,
+      rowCount: permissions.value.rowCount,
+      lifeCycleIdByStateId: permissions.value.lifeCycleIdByStateId,
+      duplicateCount: permissions.value.duplicateCount,
       error: permissions.error,
+      requirementsError: requirements.error,
     };
 
     const detail = buildObjectTypeAccessDetail(index, grants, objectTypeId, reported);
     if (detail === null) {
+      // Unreachable: existence was checked above. Kept so the null branch of
+      // the builder is handled rather than asserted away.
       throw new NotFoundError(`Object type ${objectTypeId} was not found`);
     }
     return detail;

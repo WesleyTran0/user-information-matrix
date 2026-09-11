@@ -10,6 +10,7 @@ import { MatrixRepository } from '../src/server/data/repository.ts';
 import { MockResolverSource } from '../src/server/data/mockSource.ts';
 import type { ResolverDataSource } from '../src/server/data/source.ts';
 import { ResolverApiError } from '../src/server/http/resolverClient.ts';
+import { TtlCache } from '../src/server/http/cache.ts';
 import type {
   ApiGroupRole,
   ApiKeyedByGroupId,
@@ -347,6 +348,18 @@ console.log('\nregression: catalog without states says so');
   check('meta flags it too', repo.meta().lifeCycleStatesAvailable === false);
 }
 
+console.log('\nthe cache is bounded');
+{
+  // Permission keys are role x object type, so the key space is quadratic and
+  // expiry alone would not bound it -- an expired entry is only dropped when
+  // that same key is read again.
+  const cache = new TtlCache<number>(60_000, 10);
+  for (let index = 0; index < 50; index += 1) cache.set(`k${index}`, index);
+  check('it stops growing at the cap', cache.size === 10, cache.size);
+  check('and keeps the most recent entries', cache.get('k49') === 49, cache.get('k49'));
+  check('evicting the oldest', cache.get('k0') === undefined, cache.get('k0'));
+}
+
 console.log('\nreported per-state permissions');
 {
   const repo = new MatrixRepository(new MockResolverSource(), 60_000, 6);
@@ -385,7 +398,10 @@ console.log('\nreported per-state permissions');
   const escalation = detail.lifeCycles.find((entry) => entry.lifeCycleId === 603272);
   check(
     'states with no reported row stay null, not "no access"',
-    escalation?.states.every((state) => state.permission === null) === true,
+    escalation !== undefined &&
+      escalation.states.length === 3 &&
+      escalation.states.every((state) => state.permission === null),
+    escalation?.states.length,
   );
   check(
     'the summary separates no-access from unreported',
@@ -393,10 +409,166 @@ console.log('\nreported per-state permissions');
       detail.permissionSummary.read === 2 &&
       detail.permissionSummary.none === 1 &&
       detail.permissionSummary.unreported === 3 &&
+      detail.permissionSummary.unknown === 0 &&
+      detail.permissionSummary.overstatedStates === 1 &&
+      detail.permissionSummary.understatedStates === 0 &&
       detail.permissionSummary.reported === true,
     detail.permissionSummary,
   );
   check('no error is reported when the endpoint answered', detail.permissionsError === null);
+}
+
+console.log('\nreported rows the catalog cannot place are not dropped silently');
+{
+  const source = new MockResolverSource();
+  // A row for a state id no lifecycle of this object type contains -- the
+  // condition the catalog's own two-pointer caveat admits to.
+  source.fetchRoleObjectTypePermissions = async (): Promise<ApiRolePermissionRow[]> => [
+    { id: 1, permission: 2, canBulkLaunch: false, canCreate: false, canDelete: false,
+      canMerge: false, canManageRole: false, roleId: 449698, objectTypeId: 450001,
+      objectLifeCycleId: 888001, objectLifeCycleStateId: 77777701, formId: null, org: 1,
+      externalRefId: 'x', assigned: false },
+  ];
+  const repo = new MatrixRepository(source, 60_000, 6);
+  const detail = await repo.getObjectTypeDetail(449698, 450001);
+  check(
+    'a non-empty response never reads as "nothing reported"',
+    detail.permissionSummary.reported === true,
+    detail.permissionSummary,
+  );
+  check('the unplaceable row is counted', detail.permissionSummary.unmatchedReportedRows === 1,
+    detail.permissionSummary.unmatchedReportedRows);
+  check('and its lifecycle is named for diagnosis',
+    detail.permissionSummary.unmatchedLifeCycleIds.join(',') === '888001',
+    detail.permissionSummary.unmatchedLifeCycleIds);
+}
+
+console.log('\nan unrecognised level is not counted as unreported');
+{
+  const source = new MockResolverSource();
+  source.fetchRoleObjectTypePermissions = async (): Promise<ApiRolePermissionRow[]> =>
+    [0, 1, 2, 3, 4].map((ordinal) => ({
+      id: 100 + ordinal, permission: 7, canBulkLaunch: false, canCreate: false,
+      canDelete: false, canMerge: false, canManageRole: false, roleId: 449698,
+      objectTypeId: 450001, objectLifeCycleId: 603174,
+      objectLifeCycleStateId: 603174 * 100 + ordinal, formId: null, org: 1,
+      externalRefId: `u${ordinal}`, assigned: false,
+    }));
+  const repo = new MatrixRepository(source, 60_000, 6);
+  const detail = await repo.getObjectTypeDetail(449698, 450001);
+  check('unrecognised levels get their own bucket', detail.permissionSummary.unknown === 5,
+    detail.permissionSummary);
+  check('they are not folded into "not reported"',
+    detail.permissionSummary.unreported === 3, detail.permissionSummary.unreported);
+  check('the raw value is preserved per state',
+    detail.lifeCycles.flatMap((lc) => lc.states).some((st) => st.permission?.rawLevel === 7));
+  check('an unrecognised level is not treated as a contradiction',
+    detail.permissionSummary.overstatedStates === 0 &&
+      detail.permissionSummary.understatedStates === 0);
+}
+
+console.log('\nreported access beyond the grant is flagged, not assumed away');
+{
+  const source = new MockResolverSource();
+  // Role 449698 does NOT hold lifecycle 603272; report write access anyway.
+  source.fetchRoleObjectTypePermissions = async (): Promise<ApiRolePermissionRow[]> =>
+    [0, 1, 2].map((ordinal) => ({
+      id: 200 + ordinal, permission: 2, canBulkLaunch: false, canCreate: false,
+      canDelete: false, canMerge: false, canManageRole: false, roleId: 449698,
+      objectTypeId: 450001, objectLifeCycleId: 603272,
+      objectLifeCycleStateId: 603272 * 100 + ordinal, formId: null, org: 1,
+      externalRefId: `o${ordinal}`, assigned: false,
+    }));
+  const repo = new MatrixRepository(source, 60_000, 6);
+  const detail = await repo.getObjectTypeDetail(449698, 450001);
+  check('the upper-bound assumption is checked, not trusted',
+    detail.permissionSummary.understatedStates === 3,
+    detail.permissionSummary.understatedStates);
+}
+
+console.log('\nduplicate rows for one state are merged, not last-wins');
+{
+  const source = new MockResolverSource();
+  const base = {
+    canBulkLaunch: false, canCreate: false, canDelete: false, canMerge: false,
+    canManageRole: false, roleId: 449698, objectTypeId: 450001,
+    objectLifeCycleId: 603174, objectLifeCycleStateId: 603174 * 100 + 1, org: 1,
+    assigned: false,
+  };
+  source.fetchRoleObjectTypePermissions = async (): Promise<ApiRolePermissionRow[]> => [
+    { ...base, id: 1, permission: 2, canCreate: true, formId: 1, externalRefId: 'a',
+      triggers: [{ id: 1, rolePermissionId: 1, triggerId: 11, objectLifeCycleId: 603174,
+        org: 1, externalRefId: 't1' }] },
+    // Lower level, different capability: last-wins would lose the write access.
+    { ...base, id: 2, permission: 1, canDelete: true, formId: 2, externalRefId: 'b',
+      triggers: [{ id: 2, rolePermissionId: 2, triggerId: 12, objectLifeCycleId: 603174,
+        org: 1, externalRefId: 't2' }] },
+  ];
+  const repo = new MatrixRepository(source, 60_000, 6);
+  const detail = await repo.getObjectTypeDetail(449698, 450001);
+  const state = detail.lifeCycles
+    .flatMap((lc) => lc.states)
+    .find((st) => st.id === 603174 * 100 + 1);
+  check('the most permissive level survives', state?.permission?.level === 'read-write',
+    state?.permission?.level);
+  check('capabilities from both rows are unioned',
+    state?.permission?.capabilities.canCreate === true &&
+      state.permission.capabilities.canDelete === true,
+    state?.permission?.capabilities);
+  check('triggers from both rows are unioned',
+    state?.permission?.triggerIds.join(',') === '11,12', state?.permission?.triggerIds);
+  check('and the collapse is reported', detail.permissionSummary.duplicateReportedRows === 1,
+    detail.permissionSummary.duplicateReportedRows);
+}
+
+console.log('\na requirements failure is recorded, not shown as "nothing required"');
+{
+  const source = new MockResolverSource();
+  source.fetchStateRequirements = async (): Promise<never> => {
+    throw new ResolverApiError('Upstream 500 for stateRequired', 500, '/object/objectType');
+  };
+  const repo = new MatrixRepository(source, 60_000, 6);
+  const detail = await repo.getObjectTypeDetail(449698, 450001);
+  check('the drill-down still returns', detail.lifeCycles.length === 2);
+  check('and the hole is recorded', detail.requirementsError?.includes('500') === true,
+    detail.requirementsError);
+  check('while the permissions half is unaffected',
+    detail.permissionsError === null && detail.permissionSummary.reported === true);
+}
+
+console.log('\nan unknown object type costs nothing');
+{
+  const repo = new MatrixRepository(new MockResolverSource(), 60_000, 6);
+  const outcome = await repo.getObjectTypeDetail(449698, 999991).then(
+    () => 'resolved',
+    (error: unknown) => (error instanceof Error ? error.name : 'unknown'),
+  );
+  const meta = repo.meta();
+  check('it is a 404', outcome === 'NotFoundError', outcome);
+  check('no permissions call was spent', meta.cachedStatePermissionCount === 0,
+    meta.cachedStatePermissionCount);
+  check('no requirements call was spent', meta.cachedRequirementCount === 0,
+    meta.cachedRequirementCount);
+}
+
+console.log('\nexit requirements are fetched once per object type, not once per role');
+{
+  const source = new MockResolverSource();
+  let requirementCalls = 0;
+  const inner = source.fetchStateRequirements.bind(source);
+  source.fetchStateRequirements = async (objectTypeId: number) => {
+    requirementCalls += 1;
+    return inner(objectTypeId);
+  };
+  const repo = new MatrixRepository(source, 60_000, 6);
+  await Promise.all([
+    repo.getObjectTypeDetail(449698, 450001),
+    repo.getObjectTypeDetail(449710, 450001),
+    repo.getObjectTypeDetail(449785, 450001),
+  ]);
+  check('three roles, one requirements call', requirementCalls === 1, requirementCalls);
+  check('but three permission calls', repo.meta().cachedStatePermissionCount === 3,
+    repo.meta().cachedStatePermissionCount);
 }
 
 console.log('\nreported permissions absent or failing');
