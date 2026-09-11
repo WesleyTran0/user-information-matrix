@@ -127,6 +127,24 @@ export interface StatePermission {
   formId: number | null;
 }
 
+/**
+ * A trigger available on a state, and whether this role may fire it.
+ *
+ * The full set comes from the workflow definition; `granted` comes from the
+ * role's permission row, which only lists the subset it holds. Showing the
+ * whole set is the point -- it is what makes "this role can do 2 of the 4
+ * things possible here" legible.
+ */
+export interface StateTrigger {
+  id: number;
+  name: string;
+  granted: boolean;
+  /** State names this trigger can move the object to. Deduped, may be empty. */
+  destinations: string[];
+  /** False for schedule/notification triggers rather than workflow actions. */
+  isWorkflow: boolean;
+}
+
 /** What a state requires before it can be left. */
 export interface StateRequirements {
   fieldCount: number;
@@ -144,6 +162,12 @@ export interface StateAccess extends LifeCycleState {
   /** Null when the permissions endpoint reported nothing for this state. */
   permission: StatePermission | null;
   requirements: StateRequirements | null;
+  /**
+   * Every trigger on this state, each marked with whether the role holds it.
+   * Empty when the workflow definition could not be loaded -- see
+   * `ObjectTypeAccessDetail.triggersError`.
+   */
+  triggers: StateTrigger[];
 }
 
 /** One lifecycle of one object type, resolved for one role. */
@@ -220,6 +244,12 @@ export interface ObjectTypeAccessDetail extends ObjectTypeAccess {
    * UI needs to know the difference.
    */
   requirementsError: string | null;
+  /**
+   * Set when the workflow definition (trigger names and the full per-state
+   * trigger set) could not be loaded. Without it only the role's own trigger
+   * ids are known, so the UI must not imply the list is complete.
+   */
+  triggersError: string | null;
 }
 
 export interface RoleAccess {
@@ -289,6 +319,8 @@ export interface ServerMeta {
   cachedStatePermissionCount: number;
   /** Cached per-object-type exit requirements. */
   cachedRequirementCount: number;
+  /** Cached per-object-type workflow definitions (trigger names). */
+  cachedWorkflowCount: number;
   /**
    * False when the catalog carried no lifecycle states at all -- the app then
    * cannot show state-level access, and says so instead of rendering 0/0.

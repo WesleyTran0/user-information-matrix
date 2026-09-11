@@ -13,6 +13,7 @@ lifecycle*. The matrix is rebuilt from three facts:
 | `/data/rolePermissions/objectLifeCycles/role/{roleId}` | the lifecycle ids granted to a role |
 | `/data/rolePermissions/role/{roleId}/objectType/{objectTypeId}` | **the reported access level and capabilities per state** |
 | `/object/objectType/{objectTypeId}/objectLifeCycle/stateRequired` | what each state requires before it can be left |
+| `/object/objectType/{objectTypeId}/objectLifeCycle/state?deep=true` | trigger **names**, the full per-state trigger set, and transitions |
 | `/object/objectLifeCycle?includeStates=true` | each lifecycle's `objectTypeId` and its states |
 | `/object/objectType` | every object type, and which lifecycles belong to it |
 
@@ -36,9 +37,10 @@ Per cache window (`CACHE_TTL_MS`, default 5 min):
 - **2** catalog calls — `/object/objectType`, `/object/objectLifeCycle?includeStates=true`
 - **1** call per *distinct* role inspected — shared roles are fetched once, and
   the cache is single-flight so concurrent requests for the same role collapse
-- **2** per object-type drill-down, cold: the reported permissions for that
-  (role, object type) pair, and the object type's exit requirements — the
-  latter shared by every role, so it amortises. Reopening a drill-down is free.
+- **3** per object-type drill-down, cold: the reported permissions for that
+  (role, object type) pair, plus the object type's exit requirements and its
+  workflow definition — the latter two shared by every role, so they amortise.
+  Reopening a drill-down is free.
 
 ## Running it
 
@@ -121,7 +123,7 @@ FALSE cannot pick up unverified rows. The per-object-type roll-ups
 object types without scanning states.
 
 Cost of one group, for R roles reaching T object types over P distinct
-(role, object type) pairs: `5 + R + P + T` upstream calls cold, 0 warm. The
+(role, object type) pairs: `5 + R + P + 2T` upstream calls cold, 0 warm. The
 export adds no endpoint of its own; P is bounded by R x T, so the drill-down
 fan-out runs through `mapWithConcurrency` at `RESOLVER_MAX_CONCURRENCY`.
 

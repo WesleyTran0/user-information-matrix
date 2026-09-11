@@ -41,7 +41,7 @@ json structure from endpoint (exmaple using objectTypeId=442972)
 
 ### All states of the current objectType
 
-endpoint: /object/objectType/{objectTypeId}/objectLifeCycle/stateRequired?deep=true (1 param, 1 opt param but was true when called)
+endpoint: /object/objectType/{objectTypeId}/objectLifeCycle/state?deep=true (1 param, 1 opt param but was true when called)
 
 json structure from endpoint (example using objectTypeId=442972 and deep=true)
 `json

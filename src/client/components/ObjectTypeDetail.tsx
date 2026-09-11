@@ -13,9 +13,11 @@ import { StatePermissionTable } from './StatePermissionTable.tsx';
 function LifeCycleRow({
   lifeCycle,
   requirementsUnavailable,
+  triggersUnavailable,
 }: {
   lifeCycle: LifeCycleAccess;
   requirementsUnavailable: boolean;
+  triggersUnavailable: boolean;
 }) {
   return (
     <li className={`lifecycle ${lifeCycle.granted ? '' : 'lifecycle--denied'}`}>
@@ -31,6 +33,7 @@ function LifeCycleRow({
       <StatePermissionTable
         lifeCycle={lifeCycle}
         requirementsUnavailable={requirementsUnavailable}
+        triggersUnavailable={triggersUnavailable}
       />
     </li>
   );
@@ -65,7 +68,7 @@ export function ObjectTypeDetailView({ detail }: { detail: ObjectTypeAccessDetai
       {detail.permissionSummary.reported && (
         <p className="detail__reported">
           <strong>Reported by the API:</strong>{' '}
-          <span className="perm perm--rw">{detail.permissionSummary.readWrite} read &amp; write</span>{' '}
+          <span className="perm perm--rw">{detail.permissionSummary.readWrite} read &amp; edit</span>{' '}
           <span className="perm perm--read">{detail.permissionSummary.read} read only</span>{' '}
           <span className="perm perm--none">{detail.permissionSummary.none} no access</span>
           {detail.permissionSummary.unknown > 0 && (
@@ -108,6 +111,14 @@ export function ObjectTypeDetailView({ detail }: { detail: ObjectTypeAccessDetai
         </p>
       )}
 
+      {detail.triggersError !== null && (
+        <p className="warning">
+          The workflow definition could not be loaded, so trigger names and the full per-state
+          trigger list are unavailable — only the triggers this role holds are shown, by id.
+          ({detail.triggersError})
+        </p>
+      )}
+
       {detail.requirementsError !== null && (
         <p className="warning">
           Exit requirements could not be loaded, so the last column is unknown rather than empty.
@@ -115,21 +126,12 @@ export function ObjectTypeDetailView({ detail }: { detail: ObjectTypeAccessDetai
         </p>
       )}
 
-      {detail.permissionSummary.overstatedStates > 0 && (
-        <p className="warning">
-          The lifecycle grant covers {detail.permissionSummary.overstatedStates}{' '}
-          {detail.permissionSummary.overstatedStates === 1 ? 'state' : 'states'} where the API
-          reports no access at all. The summary above the role list counts those as reachable;
-          this table is the authoritative answer.
-        </p>
-      )}
-
       {detail.permissionSummary.understatedStates > 0 && (
-        <p className="warning">
+        <p className="muted">
           The API reports access in {detail.permissionSummary.understatedStates}{' '}
-          {detail.permissionSummary.understatedStates === 1 ? 'state' : 'states'} the lifecycle
-          grant does not cover. That contradicts the assumption that the grant is an upper bound,
-          so the role list may be understating this role&apos;s access.
+          {detail.permissionSummary.understatedStates === 1 ? 'state' : 'states'} belonging to a
+          lifecycle that is not in this role&apos;s grant list, so the role list may not show every
+          object type this role can reach.
         </p>
       )}
 
@@ -139,6 +141,7 @@ export function ObjectTypeDetailView({ detail }: { detail: ObjectTypeAccessDetai
             key={lifeCycle.lifeCycleId}
             lifeCycle={lifeCycle}
             requirementsUnavailable={detail.requirementsError !== null}
+            triggersUnavailable={detail.triggersError !== null}
           />
         ))}
       </ul>

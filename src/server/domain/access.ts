@@ -7,6 +7,7 @@ import type {
   PermissionSummary,
   StatePermission,
   StateRequirements,
+  StateTrigger,
   ObjectTypeAccess,
   ObjectTypeAccessDetail,
   ObjectTypeId,
@@ -152,6 +153,8 @@ export function buildRoleAccess(
 export interface ReportedPermissions {
   byStateId: ReadonlyMap<LifeCycleStateId, StatePermission>;
   requirementsByStateId: ReadonlyMap<LifeCycleStateId, StateRequirements>;
+  /** Every trigger on each state, from the workflow definition. */
+  triggersByStateId: ReadonlyMap<LifeCycleStateId, StateTrigger[]>;
   /** Rows the endpoint returned, so dropped rows can be detected. */
   rowCount: number;
   /** The lifecycle each returned row claimed. */
@@ -159,16 +162,19 @@ export interface ReportedPermissions {
   duplicateCount: number;
   error: string | null;
   requirementsError: string | null;
+  triggersError: string | null;
 }
 
 const NO_REPORTED_PERMISSIONS: ReportedPermissions = {
   byStateId: new Map(),
   requirementsByStateId: new Map(),
+  triggersByStateId: new Map(),
   rowCount: 0,
   lifeCycleIdByStateId: new Map(),
   duplicateCount: 0,
   error: null,
   requirementsError: null,
+  triggersError: null,
 };
 
 export function buildObjectTypeAccessDetail(
@@ -195,14 +201,18 @@ export function buildObjectTypeAccessDetail(
     totalStateCount += lifeCycle.states.length;
     if (granted) grantedStateCount += lifeCycle.states.length;
 
-    const states: StateAccess[] = lifeCycle.states.map((state) => ({
-      ...state,
-      granted,
-      // The reported permission wins where it exists; `granted` stays as the
-      // cheap inference so the two can be compared in the UI.
-      permission: reported.byStateId.get(state.id) ?? null,
-      requirements: reported.requirementsByStateId.get(state.id) ?? null,
-    }));
+    const states: StateAccess[] = lifeCycle.states.map((state) => {
+      const permission = reported.byStateId.get(state.id) ?? null;
+      return {
+        ...state,
+        granted,
+        // The reported permission wins where it exists; `granted` stays as the
+        // cheap inference so the two can be compared in the UI.
+        permission,
+        requirements: reported.requirementsByStateId.get(state.id) ?? null,
+        triggers: mergeStateTriggers(reported.triggersByStateId.get(state.id), permission),
+      };
+    });
     lifeCycles.push({
       lifeCycleId,
       name: lifeCycle.name,
@@ -235,7 +245,60 @@ export function buildObjectTypeAccessDetail(
     permissionSummary,
     permissionsError: reported.error,
     requirementsError: reported.requirementsError,
+    triggersError: reported.triggersError,
   };
+}
+
+/**
+ * Marks the triggers this role may fire within the state's full set.
+ *
+ * When the workflow definition is unavailable, the role's own ids are still
+ * known, so they are listed with placeholder names rather than dropped -- the
+ * caller reports `triggersError` so the UI can say the list is incomplete.
+ */
+function mergeStateTriggers(
+  available: readonly StateTrigger[] | undefined,
+  permission: StatePermission | null,
+): StateTrigger[] {
+  const grantedIds = new Set(permission?.triggerIds ?? []);
+
+  if (available === undefined) {
+    return [...grantedIds]
+      .sort((a, b) => a - b)
+      .map((id) => ({
+        id,
+        name: `Trigger ${id}`,
+        granted: true,
+        destinations: [],
+        isWorkflow: true,
+      }));
+  }
+
+  const merged = available.map((trigger) => ({
+    ...trigger,
+    granted: grantedIds.has(trigger.id),
+  }));
+
+  // A granted id the workflow definition does not list still belongs on the
+  // state: the role demonstrably holds it.
+  const listed = new Set(available.map((trigger) => trigger.id));
+  for (const id of grantedIds) {
+    if (!listed.has(id)) {
+      merged.push({
+        id,
+        name: `Trigger ${id}`,
+        granted: true,
+        destinations: [],
+        isWorkflow: true,
+      });
+    }
+  }
+
+  // Granted first, then alphabetical, so the role's own actions lead.
+  merged.sort((a, b) =>
+    a.granted === b.granted ? a.name.localeCompare(b.name) : Number(b.granted) - Number(a.granted),
+  );
+  return merged;
 }
 
 /**

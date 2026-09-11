@@ -6,6 +6,7 @@ import type {
   LifeCycleStateId,
   StatePermission,
   StateRequirements,
+  StateTrigger,
   ObjectTypeAccessDetail,
   ObjectTypeId,
   Role,
@@ -24,6 +25,7 @@ import {
   normalizeStatePermissions,
   normalizeStateRequirements,
   normalizeUser,
+  normalizeWorkflowTriggers,
   normalizeUserGroup,
   type NormalizedStatePermissions,
 } from '../domain/normalize.ts';
@@ -75,6 +77,7 @@ export class MatrixRepository {
   readonly #rolePermissionCache: TtlCache<LifeCycleId[]>;
   readonly #statePermissionCache: TtlCache<NormalizedStatePermissions>;
   readonly #requirementsCache: TtlCache<Map<LifeCycleStateId, StateRequirements>>;
+  readonly #workflowCache: TtlCache<Map<LifeCycleStateId, StateTrigger[]>>;
   readonly #maxConcurrency: number;
   #catalogLoadedAt: string | null = null;
   #statesAvailable: boolean | null = null;
@@ -86,6 +89,7 @@ export class MatrixRepository {
     this.#rolePermissionCache = new TtlCache<LifeCycleId[]>(cacheTtlMs);
     this.#statePermissionCache = new TtlCache<NormalizedStatePermissions>(cacheTtlMs);
     this.#requirementsCache = new TtlCache<Map<LifeCycleStateId, StateRequirements>>(cacheTtlMs);
+    this.#workflowCache = new TtlCache<Map<LifeCycleStateId, StateTrigger[]>>(cacheTtlMs);
     this.#maxConcurrency = maxConcurrency;
   }
 
@@ -98,6 +102,7 @@ export class MatrixRepository {
       lifeCycleStatesAvailable: this.#statesAvailable,
       cachedStatePermissionCount: this.#statePermissionCache.size,
       cachedRequirementCount: this.#requirementsCache.size,
+      cachedWorkflowCount: this.#workflowCache.size,
     };
   }
 
@@ -107,6 +112,7 @@ export class MatrixRepository {
     this.#rolePermissionCache.clear();
     this.#statePermissionCache.clear();
     this.#requirementsCache.clear();
+    this.#workflowCache.clear();
     this.#catalogLoadedAt = null;
     this.#statesAvailable = null;
   }
@@ -202,6 +208,21 @@ export class MatrixRepository {
     });
   }
 
+  /**
+   * Trigger names and the full per-state trigger set for an object type.
+   *
+   * 1 upstream call per object type, shared across every role -- the workflow
+   * definition does not vary by role, only the granted subset does.
+   */
+  async #workflowTriggers(
+    objectTypeId: ObjectTypeId,
+  ): Promise<Map<LifeCycleStateId, StateTrigger[]>> {
+    return this.#workflowCache.resolve(`wf:${objectTypeId}`, async () => {
+      const payload = await this.#source.fetchObjectTypeWorkflow(objectTypeId);
+      return normalizeWorkflowTriggers(payload);
+    });
+  }
+
   async listGroups(): Promise<GroupListItem[]> {
     const bundle = await this.#groupBundle();
     return bundle.groups.map((group) => ({
@@ -288,7 +309,7 @@ export class MatrixRepository {
       throw new NotFoundError(`Object type ${objectTypeId} was not found`);
     }
 
-    const [grants, permissions, requirements] = await Promise.all([
+    const [grants, permissions, requirements, workflow] = await Promise.all([
       this.#roleGrants(roleId),
       this.#statePermissions(roleId, objectTypeId).then(
         (value) => ({ value, error: null as string | null }),
@@ -311,16 +332,27 @@ export class MatrixRepository {
           error: cause instanceof Error ? cause.message : String(cause),
         }),
       ),
+      // Also recorded rather than swallowed: without it the trigger list is
+      // the role's own subset, which must not be presented as complete.
+      this.#workflowTriggers(objectTypeId).then(
+        (value) => ({ value, error: null as string | null }),
+        (cause: unknown) => ({
+          value: new Map<LifeCycleStateId, StateTrigger[]>(),
+          error: cause instanceof Error ? cause.message : String(cause),
+        }),
+      ),
     ]);
 
     const reported: ReportedPermissions = {
       byStateId: permissions.value.byStateId,
       requirementsByStateId: requirements.value,
+      triggersByStateId: workflow.value,
       rowCount: permissions.value.rowCount,
       lifeCycleIdByStateId: permissions.value.lifeCycleIdByStateId,
       duplicateCount: permissions.value.duplicateCount,
       error: permissions.error,
       requirementsError: requirements.error,
+      triggersError: workflow.error,
     };
 
     const detail = buildObjectTypeAccessDetail(index, grants, objectTypeId, reported);

@@ -135,6 +135,7 @@ function countingSource(inner: ResolverDataSource): CountingSource {
     roleGrants: 0,
     statePermissions: 0,
     stateRequirements: 0,
+    workflows: 0,
   };
   const bump = (key: string): void => {
     counts[key] = (counts[key] ?? 0) + 1;
@@ -174,6 +175,10 @@ function countingSource(inner: ResolverDataSource): CountingSource {
     async fetchRoleObjectTypePermissions(roleId: number, objectTypeId: number) {
       bump('statePermissions');
       return inner.fetchRoleObjectTypePermissions(roleId, objectTypeId);
+    },
+    async fetchObjectTypeWorkflow(objectTypeId: number) {
+      bump('workflows');
+      return inner.fetchObjectTypeWorkflow(objectTypeId);
     },
     async fetchStateRequirements(objectTypeId: number) {
       bump('stateRequirements');
@@ -350,7 +355,9 @@ check(
 );
 check(
   'triggers are counted and listed',
-  openState?.['Trigger Count'] === 2 && openState['Trigger Ids'] === '3193189, 3193190',
+  // Fixture trigger ids now come from the workflow definition, since a role's
+  // granted triggers are always a subset of the state's available ones.
+  openState?.['Trigger Count'] === 2 && openState['Trigger Ids'] === '9003, 9005',
   { count: openState?.['Trigger Count'], ids: openState?.['Trigger Ids'] },
 );
 
@@ -741,8 +748,8 @@ console.log('\nexport: the measured call budget');
 // 3 collection + 2 catalog + 1 per distinct role (3) + 1 per distinct
 // (role, object type) pair (5) + 1 per distinct object type (3) = 16.
 check(
-  'a cold one-group export costs 16 upstream calls',
-  source.total() === 16,
+  'a cold one-group export costs 19 upstream calls',
+  source.total() === 19,
   source.counts,
 );
 check(

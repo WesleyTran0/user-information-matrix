@@ -152,6 +152,34 @@ async function startUpstream(): Promise<Upstream> {
       return;
     }
 
+    // The workflow definition: also unenveloped, keyed by lifecycle id. State 2
+    // carries two triggers, of which the role holds one (see the permission
+    // rows above), so "granted is a subset of available" is exercised.
+    if (/^\/object\/objectType\/\d+\/objectLifeCycle\/state$/.test(url.pathname)) {
+      res.setHeader('content-type', 'application/json');
+      res.end(JSON.stringify({
+        '55': {
+          states: [
+            { id: 1, objectLifeCycleId: 55, name: 'New', ordinal: 0, color: null,
+              stateCategoryId: null, creation: true, triggers: [] },
+            { id: 2, objectLifeCycleId: 55, name: 'Done', ordinal: 1, color: null,
+              stateCategoryId: null, creation: false, triggers: [4242, 4243] },
+          ],
+          triggers: [
+            { id: 4242, name: 'Approve Case', description: null, type: 2, isWorkflow: true,
+              objectLifeCycleId: 55, externalRefId: 'tt1' },
+            { id: 4243, name: 'Reject Case', description: null, type: 2, isWorkflow: true,
+              objectLifeCycleId: 55, externalRefId: 'tt2' },
+          ],
+          transitions: [
+            { id: 1, name: null, triggerId: 4242, destinationStateId: 1,
+              objectLifeCycleId: 55, externalRefId: 'xx1' },
+          ],
+        },
+      }));
+      return;
+    }
+
     // stateRequired is NOT enveloped upstream -- it returns the map directly.
     if (/^\/object\/objectType\/\d+\/objectLifeCycle\/stateRequired$/.test(url.pathname)) {
       res.setHeader('content-type', 'application/json');
@@ -289,18 +317,28 @@ try {
       check('states were requested explicitly',
         upstream.seen.some((entry) => entry.path === '/object/objectLifeCycle?includeStates=true'));
 
-      // The drill-down now fetches the reported per-state permissions (per
-      // role + object type) and the object type's exit requirements (shared
-      // across roles): 2 calls cold, 0 warm.
+      // The drill-down fetches the reported per-state permissions (per role +
+      // object type) plus the object type's exit requirements and workflow
+      // definition (both shared across roles): 3 calls cold, 0 warm.
       const drill = (await getJson(`${app.baseUrl}/api/roles/77/object-types/9`)).body;
       const afterDrill = (await getJson(`${app.baseUrl}/api/meta`)).body;
-      check('drill-down costs 2 upstream calls cold', afterDrill.upstreamCallCount === 9,
+      check('drill-down costs 3 upstream calls cold', afterDrill.upstreamCallCount === 10,
         afterDrill.upstreamCallCount);
 
       check('reported access levels survive the live client',
         drill.permissionSummary?.readWrite === 1 && drill.permissionSummary?.none === 1,
         drill.permissionSummary);
       const states = drill.lifeCycles?.[0]?.states ?? [];
+      const done = states.find((state: any) => state.name === 'Done');
+      check('triggers arrive named, with the role\'s marked inside the full set',
+        done?.triggers?.length === 2 &&
+          done.triggers.filter((t: any) => t.granted).length === 1 &&
+          done.triggers.some((t: any) => t.name === 'Approve Case' && t.granted === true) &&
+          done.triggers.some((t: any) => t.name === 'Reject Case' && t.granted === false),
+        done?.triggers);
+      check('a trigger carries its destination state name',
+        done?.triggers?.find((t: any) => t.id === 4242)?.destinations?.join(',') === 'New',
+        done?.triggers?.find((t: any) => t.id === 4242)?.destinations);
       check('capabilities and triggers survive the round trip',
         states.some((state: any) => state.permission?.capabilities?.canManageRole === true &&
           state.permission?.triggerIds?.length === 1),
@@ -311,7 +349,7 @@ try {
 
       await getJson(`${app.baseUrl}/api/roles/77/object-types/9`);
       const afterSecond = (await getJson(`${app.baseUrl}/api/meta`)).body;
-      check('reopening the same drill-down is free', afterSecond.upstreamCallCount === 9,
+      check('reopening the same drill-down is free', afterSecond.upstreamCallCount === 10,
         afterSecond.upstreamCallCount);
 
       // A second role on the same object type must reuse the shared exit
@@ -323,16 +361,20 @@ try {
       const afterOtherRole = (await getJson(`${app.baseUrl}/api/meta`)).body;
       const requirementCallsAfter = upstream.seen.filter((entry) =>
         entry.path.includes('/stateRequired')).length;
-      check('a second role on the same object type costs 1 call, not 2',
-        afterOtherRole.upstreamCallCount === 10, afterOtherRole.upstreamCallCount);
-      check('because exit requirements are shared across roles',
-        requirementCallsBefore === 1 && requirementCallsAfter === 1,
-        { requirementCallsBefore, requirementCallsAfter });
-      check('and both new caches are visible in meta',
+      const workflowCalls = upstream.seen.filter((entry) =>
+        entry.path.includes('/objectLifeCycle/state?deep=true')).length;
+      check('a second role on the same object type costs 1 call, not 3',
+        afterOtherRole.upstreamCallCount === 11, afterOtherRole.upstreamCallCount);
+      check('because requirements and the workflow are shared across roles',
+        requirementCallsBefore === 1 && requirementCallsAfter === 1 && workflowCalls === 1,
+        { requirementCallsBefore, requirementCallsAfter, workflowCalls });
+      check('and all three new caches are visible in meta',
         afterOtherRole.cachedStatePermissionCount === 2 &&
-          afterOtherRole.cachedRequirementCount === 1,
+          afterOtherRole.cachedRequirementCount === 1 &&
+          afterOtherRole.cachedWorkflowCount === 1,
         { perms: afterOtherRole.cachedStatePermissionCount,
-          reqs: afterOtherRole.cachedRequirementCount });
+          reqs: afterOtherRole.cachedRequirementCount,
+          wf: afterOtherRole.cachedWorkflowCount });
     } finally {
       stopApp(app);
     }

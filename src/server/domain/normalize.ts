@@ -3,6 +3,8 @@ import type {
   ApiObjectLifeCycle,
   ApiRolePermissionRow,
   ApiStateRequiredRow,
+  ApiWorkflowResponse,
+  ApiWorkflowTrigger,
   ApiObjectLifeCycleState,
   ApiObjectType,
   ApiUser,
@@ -17,6 +19,7 @@ import type {
   PermissionLevel,
   StatePermission,
   StateRequirements,
+  StateTrigger,
   ObjectType,
   ObjectTypeId,
   Role,
@@ -307,5 +310,75 @@ export function normalizeStateRequirements(
     }
     byStateId.set(stateId, { fieldCount, roleCount, otherCount });
   }
+  return byStateId;
+}
+
+/* -------------------------------------------------------------------------- */
+/* Workflow definition -> per-state trigger lists                            */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Builds the full trigger list for every state of an object type.
+ *
+ * Three joins happen here: a state's `triggers` array holds ids only, names
+ * live in the sibling `triggers` array, and destinations come from
+ * `transitions` keyed by trigger id. Several transitions can share a trigger
+ * and a destination, so destination names are deduped -- otherwise a trigger
+ * with four identical transitions renders "Review / Review / Review / Review".
+ *
+ * O(states + triggers + transitions).
+ */
+export function normalizeWorkflowTriggers(
+  payload: ApiWorkflowResponse,
+): Map<LifeCycleStateId, StateTrigger[]> {
+  const byStateId = new Map<LifeCycleStateId, StateTrigger[]>();
+
+  for (const lifeCycle of Object.values(payload)) {
+    if (lifeCycle === null || typeof lifeCycle !== 'object') continue;
+
+    const triggerById = new Map<number, ApiWorkflowTrigger>();
+    for (const trigger of lifeCycle.triggers ?? []) {
+      triggerById.set(trigger.id, trigger);
+    }
+
+    const stateNameById = new Map<number, string>();
+    for (const state of lifeCycle.states ?? []) {
+      stateNameById.set(state.id, state.name);
+    }
+
+    const destinationsByTrigger = new Map<number, Set<string>>();
+    for (const transition of lifeCycle.transitions ?? []) {
+      if (transition.destinationStateId === null) continue;
+      const name = stateNameById.get(transition.destinationStateId);
+      if (name === undefined) continue;
+      const existing = destinationsByTrigger.get(transition.triggerId);
+      if (existing === undefined) {
+        destinationsByTrigger.set(transition.triggerId, new Set([name]));
+      } else {
+        existing.add(name);
+      }
+    }
+
+    for (const state of lifeCycle.states ?? []) {
+      const triggers: StateTrigger[] = [];
+      for (const triggerId of state.triggers ?? []) {
+        const definition = triggerById.get(triggerId);
+        triggers.push({
+          id: triggerId,
+          // An id with no definition still gets a row; hiding it would
+          // understate what exists on the state.
+          name: definition?.name.trim() ?? `Trigger ${triggerId}`,
+          granted: false,
+          destinations: [...(destinationsByTrigger.get(triggerId) ?? [])].sort((a, b) =>
+            a.localeCompare(b),
+          ),
+          isWorkflow: definition?.isWorkflow ?? true,
+        });
+      }
+      triggers.sort((a, b) => a.name.localeCompare(b.name));
+      byStateId.set(state.id, triggers);
+    }
+  }
+
   return byStateId;
 }

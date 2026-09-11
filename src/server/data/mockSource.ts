@@ -8,6 +8,7 @@ import type {
   ApiStateRequiredResponse,
   ApiUser,
   ApiUserGroup,
+  ApiWorkflowResponse,
 } from '../types/resolver-api.ts';
 import type { ResolverDataSource } from './source.ts';
 import {
@@ -17,6 +18,7 @@ import {
   MOCK_OBJECT_TYPES,
   MOCK_ROLE_LIFE_CYCLE_PERMISSIONS,
   MOCK_ROLE_OBJECT_TYPE_PERMISSIONS,
+  MOCK_OBJECT_TYPE_WORKFLOWS,
   MOCK_STATE_REQUIREMENTS,
   MOCK_USER_GROUPS,
 } from './mock/fixtures.ts';
@@ -66,5 +68,9 @@ export class MockResolverSource implements ResolverDataSource {
 
   async fetchStateRequirements(objectTypeId: number): Promise<ApiStateRequiredResponse> {
     return clone(MOCK_STATE_REQUIREMENTS[objectTypeId] ?? {});
+  }
+
+  async fetchObjectTypeWorkflow(objectTypeId: number): Promise<ApiWorkflowResponse> {
+    return clone(MOCK_OBJECT_TYPE_WORKFLOWS[objectTypeId] ?? {});
   }
 }

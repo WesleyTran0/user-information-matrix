@@ -8,6 +8,7 @@ import type {
   ApiStateRequiredResponse,
   ApiUser,
   ApiUserGroup,
+  ApiWorkflowResponse,
 } from '../types/resolver-api.ts';
 import type { ResolverClient } from '../http/resolverClient.ts';
 import type { ResolverDataSource } from './source.ts';
@@ -26,6 +27,8 @@ export const RESOLVER_ENDPOINTS = {
     `/data/rolePermissions/role/${roleId}/objectType/${objectTypeId}`,
   stateRequirements: (objectTypeId: number) =>
     `/object/objectType/${objectTypeId}/objectLifeCycle/stateRequired`,
+  objectTypeWorkflow: (objectTypeId: number) =>
+    `/object/objectType/${objectTypeId}/objectLifeCycle/state?deep=true`,
 } as const;
 
 export class LiveResolverSource implements ResolverDataSource {
@@ -81,6 +84,13 @@ export class LiveResolverSource implements ResolverDataSource {
   fetchStateRequirements(objectTypeId: number): Promise<ApiStateRequiredResponse> {
     return this.#client.getRaw<ApiStateRequiredResponse>(
       RESOLVER_ENDPOINTS.stateRequirements(objectTypeId),
+    );
+  }
+
+  /** Also unenveloped: the lifecycle-keyed map is the top-level body. */
+  fetchObjectTypeWorkflow(objectTypeId: number): Promise<ApiWorkflowResponse> {
+    return this.#client.getRaw<ApiWorkflowResponse>(
+      RESOLVER_ENDPOINTS.objectTypeWorkflow(objectTypeId),
     );
   }
 }

@@ -8,6 +8,7 @@ import type {
   ApiStateRequiredResponse,
   ApiUser,
   ApiUserGroup,
+  ApiWorkflowResponse,
 } from '../types/resolver-api.ts';
 
 /**
@@ -37,4 +38,7 @@ export interface ResolverDataSource {
 
   /** What each state of an object type requires, keyed by state id. */
   fetchStateRequirements(objectTypeId: number): Promise<ApiStateRequiredResponse>;
+
+  /** States, trigger definitions and transitions for an object type. */
+  fetchObjectTypeWorkflow(objectTypeId: number): Promise<ApiWorkflowResponse>;
 }

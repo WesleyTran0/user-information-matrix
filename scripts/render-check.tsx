@@ -111,34 +111,58 @@ expect(
   ),
 );
 
-// The reported permission levels -- the whole point of the drill-down.
-expect('read & write states are labelled', detailHtml.includes('Read &amp; write'));
-expect('read-only states are labelled', detailHtml.includes('Read only'));
-expect('no-access states are labelled', detailHtml.includes('No access'));
+// Access level and capabilities are one list of verbs, as the product shows
+// them -- read/edit are not a separate column.
+expect('editable states list read and edit', detailHtml.includes('>read<') && detailHtml.includes('>edit<'));
+expect(
+  'read-only states list read without edit',
+  /read<\/span>(?![\s\S]{0,80}>edit<)/.test(detailHtml),
+);
+expect('no-access states say so plainly', detailHtml.includes('no access'));
 expect(
   'states with no reported row are distinguished from no-access',
-  detailHtml.includes('Not reported'),
+  detailHtml.includes('not reported'),
 );
-expect('capability flags render', detailHtml.includes('create') && detailHtml.includes('manage role'));
-expect('trigger counts render', detailHtml.includes('2 triggers'));
+expect('capability verbs render', detailHtml.includes('>create<'));
+expect(
+  'canManageRole reads as "manage", not "manage role"',
+  detailHtml.includes('>manage<') && !detailHtml.includes('manage role'),
+);
+// Triggers are names now, with the role's marked inside the full set.
+expect(
+  'triggers render by name, not id',
+  detailHtml.includes('Revert to Triage') && detailHtml.includes('Escalate to Supervisor'),
+);
+expect('the role\'s own triggers are marked', detailHtml.includes('trigger--granted'));
+expect(
+  'triggers the role lacks are reachable but not shown by default',
+  detailHtml.includes('not granted') && !detailHtml.includes('Overdue Reminder'),
+);
+expect(
+  'a destination state is shown once, not once per transition',
+  (detailHtml.match(/Submit for Review/g) ?? []).length === 1,
+);
+expect(
+  'a state with no triggers for this role says so',
+  detailHtml.includes('none for this role'),
+);
 expect('exit requirements render', detailHtml.includes('1 field') && detailHtml.includes('1 role'));
 expect(
   'the reported roll-up renders',
-  detailHtml.includes('detail__reported') && detailHtml.includes('2 read &amp; write'),
+  detailHtml.includes('detail__reported') && detailHtml.includes('2 read &amp; edit'),
 );
 
-// Triage is granted by the lifecycle but reported as no access. Surfacing
-// that contradiction is the reason this feature exists.
-expect('a grant the API contradicts is flagged inline', detailHtml.includes('grant overstates'));
-expect(
-  'and explained above the table',
-  detailHtml.includes('reports no access at all'),
-);
+// A role having no access in most states of a workflow is normal, so it must
+// NOT be flagged as a discrepancy against the lifecycle grant.
+expect('no-access states are not flagged as a grant discrepancy',
+  !detailHtml.includes('grant overstates') && !detailHtml.includes('overstates'));
+expect('and no alarming banner is rendered for them',
+  !detailHtml.includes('reports no access at all'));
 
 expect('each lifecycle table is named for assistive tech', detailHtml.includes('<caption'));
 expect(
-  'trigger ids are in the text, not only a tooltip',
-  detailHtml.includes('3193189') || detailHtml.includes('(11, 12)') || /\(\d+, ?\d+\)/.test(detailHtml),
+  'a trigger shows where firing it leads',
+  detailHtml.includes('\u2192 Triage') || detailHtml.includes('&#x2192; Triage'),
 );
 
 // The paths the reviewer found uncovered: an unrecognised level, a failed
@@ -161,7 +185,7 @@ expect(
     })),
   };
   const unknownHtml = text(renderToString(<ObjectTypeDetailView detail={unknownLevel} />));
-  expect('an unrecognised level shows the raw value', unknownHtml.includes('Unrecognised (7)'));
+  expect('an unrecognised level shows the raw value', unknownHtml.includes('unrecognised (7)'));
   expect('and is counted apart from "not reported"', unknownHtml.includes('2 unrecognised'));
 
   const failed: typeof base = {
@@ -194,9 +218,9 @@ expect(
     permissionSummary: { ...base.permissionSummary, understatedStates: 3 },
   };
   expect(
-    'access beyond the grant is surfaced too',
+    'access outside the grant list is noted, since the role list may be short',
     text(renderToString(<ObjectTypeDetailView detail={understated} />)).includes(
-      'does not cover',
+      'may not show every object type',
     ),
   );
 

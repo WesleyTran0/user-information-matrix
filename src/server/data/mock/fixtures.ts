@@ -22,6 +22,7 @@ import type {
   ApiStateRequiredRow,
   ApiUser,
   ApiUserGroup,
+  ApiWorkflowResponse,
 } from '../../types/resolver-api.ts';
 
 const ORG = 1000;
@@ -436,8 +437,8 @@ export const MOCK_ROLE_OBJECT_TYPE_PERMISSIONS: Record<string, ApiRolePermission
   // uniformly across its states, and nothing at all on the escalation one.
   '449698:450001': [
     permissionRow(449698, 450001, 603174, 0, 0),
-    permissionRow(449698, 450001, 603174, 1, 2, { canCreate: true, canManageRole: true }, [3193189, 3193190]),
-    permissionRow(449698, 450001, 603174, 2, 2, { canManageRole: true }, [3193201]),
+    permissionRow(449698, 450001, 603174, 1, 2, { canCreate: true, canManageRole: true }, [9003, 9005]),
+    permissionRow(449698, 450001, 603174, 2, 2, { canManageRole: true }, [9007]),
     permissionRow(449698, 450001, 603174, 3, 1),
     permissionRow(449698, 450001, 603174, 4, 1, { canMerge: true }),
   ],
@@ -482,5 +483,73 @@ export const MOCK_STATE_REQUIREMENTS: Record<number, Record<string, ApiStateRequ
         fieldId: 3146733, relationshipTypeId: null, propertyId: null, roleId: null,
         type: 1, org: ORG },
     ],
+  },
+};
+
+/* -------------------------------------------------------------------------- */
+/* Workflow definitions: trigger names and the full per-state trigger set     */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Mirrors `/object/objectType/{id}/objectLifeCycle/state?deep=true`.
+ *
+ * The point of this payload is that a state lists *every* trigger on it, while
+ * the role-permission rows list only the subset a role may fire. Incident
+ * Workflow's Open state therefore has four triggers, of which Incident Owner
+ * holds two -- so anything that renders only the role's subset, or that assumes
+ * the two sets are equal, fails these fixtures.
+ */
+export const MOCK_OBJECT_TYPE_WORKFLOWS: Record<number, ApiWorkflowResponse> = {
+  450001: {
+    '603174': {
+      states: [
+        { id: 60317400, objectLifeCycleId: 603174, name: 'Triage', ordinal: 0, color: '#dadee0',
+          stateCategoryId: null, creation: true, triggers: [9001, 9002] },
+        { id: 60317401, objectLifeCycleId: 603174, name: 'Open', ordinal: 1, color: '#35add4',
+          stateCategoryId: 1, creation: false, triggers: [9003, 9004, 9005, 9006] },
+        { id: 60317402, objectLifeCycleId: 603174, name: 'Investigation', ordinal: 2,
+          color: '#35add4', stateCategoryId: 1, creation: false, triggers: [9007, 9008] },
+        { id: 60317403, objectLifeCycleId: 603174, name: 'Review', ordinal: 3, color: '#d49a35',
+          stateCategoryId: 1, creation: false, triggers: [9009] },
+        { id: 60317404, objectLifeCycleId: 603174, name: 'Closed', ordinal: 4, color: '#4a9d5f',
+          stateCategoryId: 2, creation: false, triggers: [] },
+      ],
+      triggers: [
+        { id: 9001, name: 'Create Incident', description: null, type: 1, isWorkflow: true,
+          objectLifeCycleId: 603174, externalRefId: 't9001' },
+        { id: 9002, name: 'Create Confidential Incident', description: null, type: 1,
+          isWorkflow: true, objectLifeCycleId: 603174, externalRefId: 't9002' },
+        { id: 9003, name: 'Revert to Triage', description: null, type: 2, isWorkflow: true,
+          objectLifeCycleId: 603174, externalRefId: 't9003' },
+        { id: 9004, name: 'Start Investigation', description: null, type: 2, isWorkflow: true,
+          objectLifeCycleId: 603174, externalRefId: 't9004' },
+        { id: 9005, name: 'Escalate to Supervisor', description: null, type: 2, isWorkflow: true,
+          objectLifeCycleId: 603174, externalRefId: 't9005' },
+        { id: 9006, name: 'Overdue Reminder', description: null, type: 3, isWorkflow: false,
+          objectLifeCycleId: 603174, externalRefId: 't9006' },
+        { id: 9007, name: 'Submit for Review', description: null, type: 2, isWorkflow: true,
+          objectLifeCycleId: 603174, externalRefId: 't9007' },
+        { id: 9008, name: 'Return to Open', description: null, type: 2, isWorkflow: true,
+          objectLifeCycleId: 603174, externalRefId: 't9008' },
+        { id: 9009, name: 'Close Incident', description: null, type: 2, isWorkflow: true,
+          objectLifeCycleId: 603174, externalRefId: 't9009' },
+      ],
+      transitions: [
+        { id: 1, name: null, triggerId: 9003, destinationStateId: 60317400,
+          objectLifeCycleId: 603174, externalRefId: 'x1' },
+        { id: 2, name: null, triggerId: 9004, destinationStateId: 60317402,
+          objectLifeCycleId: 603174, externalRefId: 'x2' },
+        // Two transitions, one destination: the UI must not show it twice.
+        { id: 3, name: null, triggerId: 9007, destinationStateId: 60317403,
+          objectLifeCycleId: 603174, externalRefId: 'x3' },
+        { id: 4, name: null, triggerId: 9007, destinationStateId: 60317403,
+          objectLifeCycleId: 603174, externalRefId: 'x4' },
+        { id: 5, name: null, triggerId: 9009, destinationStateId: 60317404,
+          objectLifeCycleId: 603174, externalRefId: 'x5' },
+        // Self-loop with no destination: must not render an arrow to nowhere.
+        { id: 6, name: null, triggerId: 9006, destinationStateId: null,
+          objectLifeCycleId: 603174, externalRefId: 'x6' },
+      ],
+    },
   },
 };

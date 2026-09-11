@@ -21,6 +21,7 @@ import type {
   ApiStateRequiredResponse,
   ApiUser,
   ApiUserGroup,
+  ApiWorkflowResponse,
 } from '../src/server/types/resolver-api.ts';
 
 let failures = 0;
@@ -173,6 +174,9 @@ function sourceOf(parts: {
       return [];
     },
     async fetchStateRequirements(): Promise<ApiStateRequiredResponse> {
+      return {};
+    },
+    async fetchObjectTypeWorkflow(): Promise<ApiWorkflowResponse> {
       return {};
     },
     async fetchRoleLifeCyclePermissions(roleId: number): Promise<ApiRoleLifeCyclePermission[]> {

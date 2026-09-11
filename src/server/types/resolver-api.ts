@@ -212,3 +212,57 @@ export interface ApiStateRequiredRow {
 export type ApiRolePermissionsResponse = ApiEnvelope<ApiRolePermissionRow[]>;
 /** Not enveloped: this endpoint returns the keyed map at the top level. */
 export type ApiStateRequiredResponse = Record<string, ApiStateRequiredRow[]>;
+
+/* -------------------------------------------------------------------------- */
+/* Workflow definition: states, triggers, transitions                        */
+/* -------------------------------------------------------------------------- */
+
+/** A trigger definition. `id` is what the role-permission rows reference. */
+export interface ApiWorkflowTrigger {
+  id: number;
+  name: string;
+  description: string | null;
+  type: number;
+  isWorkflow: boolean;
+  objectLifeCycleId: number;
+  externalRefId: string;
+}
+
+/** Where firing a trigger can move the object. */
+export interface ApiWorkflowTransition {
+  id: number;
+  name: string | null;
+  triggerId: number;
+  destinationStateId: number | null;
+  objectLifeCycleId: number;
+  externalRefId: string;
+}
+
+/** A state, carrying the ids of *every* trigger available on it. */
+export interface ApiWorkflowState {
+  id: number;
+  objectLifeCycleId: number;
+  name: string;
+  ordinal: number | null;
+  color: string | null;
+  stateCategoryId: number | null;
+  creation: boolean;
+  /** Ids only; names come from the sibling `triggers` array. */
+  triggers?: number[];
+}
+
+/**
+ * GET /object/objectType/{objectTypeId}/objectLifeCycle/state?deep=true
+ *
+ * Keyed by lifecycle id, and NOT wrapped in a `{ data }` envelope. This is the
+ * only source of trigger *names* and of the full per-state trigger set -- the
+ * role-permission rows only report the subset a role may fire.
+ */
+export type ApiWorkflowResponse = Record<
+  string,
+  {
+    states: ApiWorkflowState[];
+    triggers: ApiWorkflowTrigger[];
+    transitions: ApiWorkflowTransition[];
+  }
+>;

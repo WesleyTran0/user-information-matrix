@@ -410,6 +410,8 @@ body {
   vertical-align: top;
 }
 
+.perm-table td:nth-child(3) { min-width: 22ch; }
+
 .perm-table thead th {
   font-size: 11px;
   font-weight: 650;
@@ -428,10 +430,6 @@ body {
 .perm-table__state {
   font-weight: 550;
   white-space: nowrap;
-}
-
-.perm-row--contradiction {
-  background: var(--warning-soft);
 }
 
 /* Available to assistive tech and to copy-paste, out of the visual layout. */
@@ -489,15 +487,49 @@ body {
 
 .cap--trigger { border-style: dashed; cursor: help; }
 
-.flag {
-  margin-left: 6px;
-  padding: 0 6px;
+/* Access verbs read slightly stronger than the capability flags. */
+.cap--access {
+  background: var(--granted-soft);
+  border-color: var(--granted);
+  color: var(--granted);
+  font-weight: 600;
+}
+
+/* ---- trigger cell ------------------------------------------------------ */
+
+.trigger-cell {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+}
+
+.trigger-list { display: inline-flex; flex-wrap: wrap; gap: 4px; }
+
+.trigger {
+  display: inline-block;
+  padding: 1px 7px;
   border-radius: 4px;
-  background: var(--warning-soft);
-  color: var(--warning);
-  font-size: 10px;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.03em;
-  cursor: help;
+  font-size: 11px;
+  border: 1px solid transparent;
+  max-width: 34ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Held by this role: reads as an action they can take. */
+.trigger--granted {
+  background: var(--granted-soft);
+  border-color: var(--granted);
+  color: var(--granted);
+  font-weight: 600;
+}
+
+/* Exists on the state, but not for this role. */
+.trigger--other {
+  background: var(--surface-sunken);
+  border-color: var(--border);
+  color: var(--text-muted);
+  border-style: dashed;
 }
