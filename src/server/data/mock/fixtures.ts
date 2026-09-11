@@ -1,8 +1,13 @@
 /**
  * Fixture dataset.
  *
- * Rows marked "from CLAUDE.md" are copied verbatim from the sample payloads.
- * The rest are synthesized to exercise the cases the samples do not cover:
+ * Rows marked "from CLAUDE.md" follow the shape of the sample payloads.
+ * PERSONAL DETAILS ARE FICTIONAL: the names and email addresses in the sample
+ * were real people, so they were replaced with obviously invented ones on
+ * @example.com before this repository was published. Ids, structure and every
+ * relationship the derivation depends on are unchanged.
+ *
+ * The remaining rows are synthesized to exercise cases the samples do not:
  * an object type owning two lifecycles (partial coverage), a role shared by
  * two groups (call de-duplication), a grant pointing at an unknown lifecycle
  * (unresolved reporting), and a role with no grants at all.

@@ -1,3 +1,9 @@
+> **Redaction note.** The JSON samples below are real responses, with the
+> personal details replaced: names and email addresses are fictional
+> (@example.com) and the org id is a placeholder. Endpoint paths, payload
+> shapes, ids and relationships are untouched, so the samples remain an
+> accurate specification.
+
 ### User Groups
 
 endpoint: "/user/group" (no params)
