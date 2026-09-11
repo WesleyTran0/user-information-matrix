@@ -313,6 +313,26 @@ try {
       const afterSecond = (await getJson(`${app.baseUrl}/api/meta`)).body;
       check('reopening the same drill-down is free', afterSecond.upstreamCallCount === 9,
         afterSecond.upstreamCallCount);
+
+      // A second role on the same object type must reuse the shared exit
+      // requirements: 1 new call, not 2. This is the load-bearing half of the
+      // drill-down budget claim.
+      const requirementCallsBefore = upstream.seen.filter((entry) =>
+        entry.path.includes('/stateRequired')).length;
+      await getJson(`${app.baseUrl}/api/roles/78/object-types/9`);
+      const afterOtherRole = (await getJson(`${app.baseUrl}/api/meta`)).body;
+      const requirementCallsAfter = upstream.seen.filter((entry) =>
+        entry.path.includes('/stateRequired')).length;
+      check('a second role on the same object type costs 1 call, not 2',
+        afterOtherRole.upstreamCallCount === 10, afterOtherRole.upstreamCallCount);
+      check('because exit requirements are shared across roles',
+        requirementCallsBefore === 1 && requirementCallsAfter === 1,
+        { requirementCallsBefore, requirementCallsAfter });
+      check('and both new caches are visible in meta',
+        afterOtherRole.cachedStatePermissionCount === 2 &&
+          afterOtherRole.cachedRequirementCount === 1,
+        { perms: afterOtherRole.cachedStatePermissionCount,
+          reqs: afterOtherRole.cachedRequirementCount });
     } finally {
       stopApp(app);
     }

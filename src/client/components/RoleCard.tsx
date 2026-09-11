@@ -99,8 +99,11 @@ export function RoleCard({ entry, expanded, onToggle, selection, onSelect }: Rol
                         coverage={objectType.coverage}
                         title={`${objectType.grantedLifeCycleCount} of ${objectType.totalLifeCycleCount} lifecycles granted`}
                       />
-                      <span className="object-type__meta">
-                        {objectType.grantedStateCount}/{objectType.totalStateCount} states
+                      <span
+                        className="object-type__meta"
+                        title="From the lifecycle grant, which is an upper bound. Open the row for the levels the API reports."
+                      >
+                        {objectType.grantedStateCount}/{objectType.totalStateCount} states granted
                       </span>
                     </button>
 

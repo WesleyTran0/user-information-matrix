@@ -175,9 +175,32 @@ export interface PermissionSummary {
   readWrite: number;
   read: number;
   none: number;
+  /** Level outside the known 0/1/2 encoding. Counted apart from `unreported`
+   * because "the API said something we do not understand" and "the API said
+   * nothing" are different facts. */
+  unknown: number;
+  /** States for which the endpoint returned no row at all. */
   unreported: number;
-  /** True when at least one state carried a reported permission row. */
+  /** True when the endpoint returned at least one row, matched or not. */
   reported: boolean;
+  /**
+   * Rows the endpoint returned whose state id is not in the merged catalog, so
+   * they could not be attached to any state. Non-zero means real reported
+   * access is missing from the table below and must be said out loud.
+   */
+  unmatchedReportedRows: number;
+  /** Lifecycles those unmatched rows belonged to, for diagnosis. */
+  unmatchedLifeCycleIds: LifeCycleId[];
+  /** Rows collapsed because several arrived for the same state. */
+  duplicateReportedRows: number;
+  /** States the grant covers but the API reports no access in. */
+  overstatedStates: number;
+  /**
+   * States the API grants access in but the lifecycle grant does not cover.
+   * The app assumes the grant is an upper bound; this counts violations of
+   * that assumption rather than trusting it.
+   */
+  understatedStates: number;
 }
 
 /** Drill-down payload behind a single object type row. */
@@ -191,6 +214,12 @@ export interface ObjectTypeAccessDetail extends ObjectTypeAccess {
    * view is still rendered, flagged as inference-only.
    */
   permissionsError: string | null;
+  /**
+   * Set when the exit-requirements call failed. Without it an empty
+   * requirements cell is indistinguishable from "nothing is required", so the
+   * UI needs to know the difference.
+   */
+  requirementsError: string | null;
 }
 
 export interface RoleAccess {
@@ -256,6 +285,10 @@ export interface ServerMeta {
   catalogLoadedAt: string | null;
   upstreamCallCount: number;
   cachedRolePermissionCount: number;
+  /** Cached (role, object type) permission responses. */
+  cachedStatePermissionCount: number;
+  /** Cached per-object-type exit requirements. */
+  cachedRequirementCount: number;
   /**
    * False when the catalog carried no lifecycle states at all -- the app then
    * cannot show state-level access, and says so instead of rendering 0/0.

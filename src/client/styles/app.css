@@ -430,8 +430,29 @@ body {
   white-space: nowrap;
 }
 
-.perm-row--overstated {
+.perm-row--contradiction {
   background: var(--warning-soft);
+}
+
+/* Available to assistive tech and to copy-paste, out of the visual layout. */
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* Secondary detail inside a chip or flag: visible, just quieter. */
+.cap__detail {
+  font-weight: 400;
+  text-transform: none;
+  letter-spacing: 0;
+  opacity: 0.8;
 }
 
 .perm {

@@ -10,7 +10,13 @@ import { CoverageBadge } from './CoverageBadge.tsx';
 import { Message } from './Message.tsx';
 import { StatePermissionTable } from './StatePermissionTable.tsx';
 
-function LifeCycleRow({ lifeCycle }: { lifeCycle: LifeCycleAccess }) {
+function LifeCycleRow({
+  lifeCycle,
+  requirementsUnavailable,
+}: {
+  lifeCycle: LifeCycleAccess;
+  requirementsUnavailable: boolean;
+}) {
   return (
     <li className={`lifecycle ${lifeCycle.granted ? '' : 'lifecycle--denied'}`}>
       <div className="lifecycle__head">
@@ -22,7 +28,10 @@ function LifeCycleRow({ lifeCycle }: { lifeCycle: LifeCycleAccess }) {
       {lifeCycle.description !== null && (
         <p className="lifecycle__description">{lifeCycle.description}</p>
       )}
-      <StatePermissionTable lifeCycle={lifeCycle} />
+      <StatePermissionTable
+        lifeCycle={lifeCycle}
+        requirementsUnavailable={requirementsUnavailable}
+      />
     </li>
   );
 }
@@ -59,6 +68,14 @@ export function ObjectTypeDetailView({ detail }: { detail: ObjectTypeAccessDetai
           <span className="perm perm--rw">{detail.permissionSummary.readWrite} read &amp; write</span>{' '}
           <span className="perm perm--read">{detail.permissionSummary.read} read only</span>{' '}
           <span className="perm perm--none">{detail.permissionSummary.none} no access</span>
+          {detail.permissionSummary.unknown > 0 && (
+            <>
+              {' '}
+              <span className="perm perm--unknown">
+                {detail.permissionSummary.unknown} unrecognised
+              </span>
+            </>
+          )}
           {detail.permissionSummary.unreported > 0 && (
             <>
               {' '}
@@ -70,17 +87,59 @@ export function ObjectTypeDetailView({ detail }: { detail: ObjectTypeAccessDetai
         </p>
       )}
 
-      {overstatedCount(detail) > 0 && (
+      {detail.permissionSummary.unmatchedReportedRows > 0 && (
         <p className="warning">
-          The lifecycle grant covers {overstatedCount(detail)}{' '}
-          {overstatedCount(detail) === 1 ? 'state' : 'states'} where the API reports no access at
-          all. The summary above the role list counts those as reachable; this table is the
-          authoritative answer.
+          The API reported access for {detail.permissionSummary.unmatchedReportedRows}{' '}
+          {detail.permissionSummary.unmatchedReportedRows === 1 ? 'state' : 'states'} that this
+          object type&apos;s lifecycles do not contain, so {' '}
+          {detail.permissionSummary.unmatchedReportedRows === 1 ? 'it is' : 'they are'} missing from
+          the table below. This usually means the object type and lifecycle records disagree
+          upstream. Lifecycle{' '}
+          {detail.permissionSummary.unmatchedLifeCycleIds.length === 1 ? 'id' : 'ids'}:{' '}
+          {detail.permissionSummary.unmatchedLifeCycleIds.join(', ')}.
         </p>
       )}
+
+      {detail.permissionSummary.duplicateReportedRows > 0 && (
+        <p className="muted">
+          {detail.permissionSummary.duplicateReportedRows} additional{' '}
+          {detail.permissionSummary.duplicateReportedRows === 1 ? 'row was' : 'rows were'} returned
+          for states that already had one; they were merged to the most permissive level.
+        </p>
+      )}
+
+      {detail.requirementsError !== null && (
+        <p className="warning">
+          Exit requirements could not be loaded, so the last column is unknown rather than empty.
+          ({detail.requirementsError})
+        </p>
+      )}
+
+      {detail.permissionSummary.overstatedStates > 0 && (
+        <p className="warning">
+          The lifecycle grant covers {detail.permissionSummary.overstatedStates}{' '}
+          {detail.permissionSummary.overstatedStates === 1 ? 'state' : 'states'} where the API
+          reports no access at all. The summary above the role list counts those as reachable;
+          this table is the authoritative answer.
+        </p>
+      )}
+
+      {detail.permissionSummary.understatedStates > 0 && (
+        <p className="warning">
+          The API reports access in {detail.permissionSummary.understatedStates}{' '}
+          {detail.permissionSummary.understatedStates === 1 ? 'state' : 'states'} the lifecycle
+          grant does not cover. That contradicts the assumption that the grant is an upper bound,
+          so the role list may be understating this role&apos;s access.
+        </p>
+      )}
+
       <ul className="lifecycle-list">
         {detail.lifeCycles.map((lifeCycle) => (
-          <LifeCycleRow key={lifeCycle.lifeCycleId} lifeCycle={lifeCycle} />
+          <LifeCycleRow
+            key={lifeCycle.lifeCycleId}
+            lifeCycle={lifeCycle}
+            requirementsUnavailable={detail.requirementsError !== null}
+          />
         ))}
       </ul>
     </div>
@@ -88,9 +147,9 @@ export function ObjectTypeDetailView({ detail }: { detail: ObjectTypeAccessDetai
 }
 
 /**
- * Detail responses are pure functions of the catalog and the role's cached
- * grants, and cost no upstream call, but re-requesting one on every expand and
- * collapse still means a round trip and a loading flash over unchanged data.
+ * Re-requesting a detail on every expand and collapse means a round trip and a
+ * loading flash over unchanged data. It also now costs up to two upstream
+ * calls on a cold server cache, so memoising matters more than it used to.
  *
  * Scope of the memo: entries live for the lifetime of the page and are never
  * evicted (bounded by roles x object types). The client does not re-ask, so
@@ -98,17 +157,6 @@ export function ObjectTypeDetailView({ detail }: { detail: ObjectTypeAccessDetai
  * clear -- reload the page to pick up a changed catalog.
  */
 const detailCache = new Map<string, ObjectTypeAccessDetail>();
-
-/** States the grant claims but the API denies -- the gap worth calling out. */
-function overstatedCount(detail: ObjectTypeAccessDetail): number {
-  let count = 0;
-  for (const lifeCycle of detail.lifeCycles) {
-    for (const state of lifeCycle.states) {
-      if (state.granted && state.permission?.level === 'none') count += 1;
-    }
-  }
-  return count;
-}
 
 interface ObjectTypeDetailProps {
   roleId: RoleId;
@@ -125,7 +173,12 @@ export function ObjectTypeDetail({ roleId, objectTypeId, panelId }: ObjectTypeDe
       ? null
       : async (signal) => {
           const detail = await api.objectTypeDetail(roleId, objectTypeId, signal);
-          detailCache.set(key, detail);
+          // A detail carrying a transient upstream failure must not be cached,
+          // or the row would show the error until a full page reload. The
+          // server does not cache the failure either, so reopening retries.
+          if (detail.permissionsError === null && detail.requirementsError === null) {
+            detailCache.set(key, detail);
+          }
           return detail;
         },
     // `cached` also decides whether `load` is null, but it is deliberately not

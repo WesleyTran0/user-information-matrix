@@ -124,7 +124,7 @@ expect('trigger counts render', detailHtml.includes('2 triggers'));
 expect('exit requirements render', detailHtml.includes('1 field') && detailHtml.includes('1 role'));
 expect(
   'the reported roll-up renders',
-  detailHtml.includes('Reported by the API') && detailHtml.includes('2 read &amp; write'),
+  detailHtml.includes('detail__reported') && detailHtml.includes('2 read &amp; write'),
 );
 
 // Triage is granted by the lifecycle but reported as no access. Surfacing
@@ -134,6 +134,83 @@ expect(
   'and explained above the table',
   detailHtml.includes('reports no access at all'),
 );
+
+expect('each lifecycle table is named for assistive tech', detailHtml.includes('<caption'));
+expect(
+  'trigger ids are in the text, not only a tooltip',
+  detailHtml.includes('3193189') || detailHtml.includes('(11, 12)') || /\(\d+, ?\d+\)/.test(detailHtml),
+);
+
+// The paths the reviewer found uncovered: an unrecognised level, a failed
+// permissions call, a failed requirements call, and a zero-state lifecycle.
+{
+  const base = await repository.getObjectTypeDetail(449698, 450001);
+
+  const unknownLevel: typeof base = {
+    ...base,
+    permissionSummary: { ...base.permissionSummary, unknown: 2, readWrite: 0 },
+    lifeCycles: base.lifeCycles.map((lifeCycle) => ({
+      ...lifeCycle,
+      states: lifeCycle.states.map((state) => ({
+        ...state,
+        permission:
+          state.permission === null
+            ? null
+            : { ...state.permission, level: 'unknown' as const, rawLevel: 7 },
+      })),
+    })),
+  };
+  const unknownHtml = text(renderToString(<ObjectTypeDetailView detail={unknownLevel} />));
+  expect('an unrecognised level shows the raw value', unknownHtml.includes('Unrecognised (7)'));
+  expect('and is counted apart from "not reported"', unknownHtml.includes('2 unrecognised'));
+
+  const failed: typeof base = {
+    ...base,
+    permissionsError: 'Upstream 500 for /data/rolePermissions',
+    requirementsError: 'Upstream 500 for /object/objectType',
+  };
+  const failedHtml = text(renderToString(<ObjectTypeDetailView detail={failed} />));
+  expect('a failed permissions call is stated', failedHtml.includes('could not be loaded'));
+  expect(
+    'a failed requirements call renders "unknown", not an empty cell',
+    failedHtml.includes('unknown rather than empty') && failedHtml.includes('>unknown<'),
+  );
+
+  const unplaceable: typeof base = {
+    ...base,
+    permissionSummary: {
+      ...base.permissionSummary,
+      unmatchedReportedRows: 2,
+      unmatchedLifeCycleIds: [888001],
+    },
+  };
+  expect(
+    'reported rows the catalog cannot place are surfaced',
+    text(renderToString(<ObjectTypeDetailView detail={unplaceable} />)).includes('888001'),
+  );
+
+  const understated: typeof base = {
+    ...base,
+    permissionSummary: { ...base.permissionSummary, understatedStates: 3 },
+  };
+  expect(
+    'access beyond the grant is surfaced too',
+    text(renderToString(<ObjectTypeDetailView detail={understated} />)).includes(
+      'does not cover',
+    ),
+  );
+
+  const stateless: typeof base = {
+    ...base,
+    lifeCycles: base.lifeCycles.map((lifeCycle) => ({ ...lifeCycle, states: [] })),
+  };
+  expect(
+    'a lifecycle with no states says so instead of rendering an empty table',
+    text(renderToString(<ObjectTypeDetailView detail={stateless} />)).includes(
+      'reported no states',
+    ),
+  );
+}
 
 // A catalog with no states must warn without the user opening anything.
 const degraded = text(renderToString(<DerivationNotice note={buildDerivationNote(false)} />));

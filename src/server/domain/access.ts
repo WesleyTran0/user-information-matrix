@@ -41,7 +41,7 @@ import type { CatalogIndex } from './catalogIndex.ts';
  * the inference, and it is reported to the client in `DerivationNote`.
  */
 const BASE_CAVEATS: readonly string[] = [
-  'This summary is derived from lifecycle grants, which is an upper bound: open an object type to see the access levels the API actually reports per state, which are frequently narrower.',
+  'This summary is derived from lifecycle grants, which are expected to be an upper bound: open an object type to see the access levels the API actually reports per state, which are frequently narrower. Where the reported access instead exceeds the grant, the drill-down flags it rather than assuming the grant wins.',
   'An object type can own several lifecycles; partial coverage means only some of them are granted.',
   'Object type <-> lifecycle association is itself merged from two upstream pointers (objectType.objectLifeCycleId and objectLifeCycle.objectTypeId), which do not always agree. Coverage is measured against that merged set.',
 ];
@@ -152,13 +152,23 @@ export function buildRoleAccess(
 export interface ReportedPermissions {
   byStateId: ReadonlyMap<LifeCycleStateId, StatePermission>;
   requirementsByStateId: ReadonlyMap<LifeCycleStateId, StateRequirements>;
+  /** Rows the endpoint returned, so dropped rows can be detected. */
+  rowCount: number;
+  /** The lifecycle each returned row claimed. */
+  lifeCycleIdByStateId: ReadonlyMap<LifeCycleStateId, number>;
+  duplicateCount: number;
   error: string | null;
+  requirementsError: string | null;
 }
 
 const NO_REPORTED_PERMISSIONS: ReportedPermissions = {
   byStateId: new Map(),
   requirementsByStateId: new Map(),
+  rowCount: 0,
+  lifeCycleIdByStateId: new Map(),
+  duplicateCount: 0,
   error: null,
+  requirementsError: null,
 };
 
 export function buildObjectTypeAccessDetail(
@@ -207,7 +217,7 @@ export function buildObjectTypeAccessDetail(
     a.granted === b.granted ? a.name.localeCompare(b.name) : Number(b.granted) - Number(a.granted),
   );
 
-  const permissionSummary = summarizePermissions(lifeCycles);
+  const permissionSummary = summarizePermissions(lifeCycles, reported);
 
   return {
     objectTypeId,
@@ -224,18 +234,40 @@ export function buildObjectTypeAccessDetail(
     lifeCycles,
     permissionSummary,
     permissionsError: reported.error,
+    requirementsError: reported.requirementsError,
   };
 }
 
-/** Counts states by reported level. O(states). */
-function summarizePermissions(lifeCycles: readonly LifeCycleAccess[]): PermissionSummary {
+/**
+ * Counts states by reported level, and reconciles what was reported against
+ * what could be attached.
+ *
+ * A row whose state id is not in the merged catalog cannot be shown against
+ * any state, so it is counted as unmatched rather than quietly dropped -- the
+ * catalog's two object-type pointers are known to disagree, which is exactly
+ * when this happens. O(states + rows).
+ */
+function summarizePermissions(
+  lifeCycles: readonly LifeCycleAccess[],
+  reported: ReportedPermissions,
+): PermissionSummary {
   const summary: PermissionSummary = {
     readWrite: 0,
     read: 0,
     none: 0,
+    unknown: 0,
     unreported: 0,
-    reported: false,
+    // Driven by what the endpoint returned, not by what could be matched: a
+    // non-empty response must never render as "nothing was reported".
+    reported: reported.rowCount > 0,
+    unmatchedReportedRows: 0,
+    unmatchedLifeCycleIds: [],
+    duplicateReportedRows: reported.duplicateCount,
+    overstatedStates: 0,
+    understatedStates: 0,
   };
+
+  const matchedStateIds = new Set<LifeCycleStateId>();
 
   for (const lifeCycle of lifeCycles) {
     for (const state of lifeCycle.states) {
@@ -243,7 +275,8 @@ function summarizePermissions(lifeCycles: readonly LifeCycleAccess[]): Permissio
         summary.unreported += 1;
         continue;
       }
-      summary.reported = true;
+      matchedStateIds.add(state.id);
+
       switch (state.permission.level) {
         case 'read-write':
           summary.readWrite += 1;
@@ -255,12 +288,28 @@ function summarizePermissions(lifeCycles: readonly LifeCycleAccess[]): Permissio
           summary.none += 1;
           break;
         default:
-          // An unrecognised level is not "no access"; leave it uncounted here
-          // and let the per-state row show the raw value.
-          summary.unreported += 1;
+          summary.unknown += 1;
       }
+
+      // The grant and the report disagreeing is worth counting in both
+      // directions; the app assumes the grant is an upper bound, and this is
+      // what would falsify that.
+      if (state.granted && state.permission.level === 'none') summary.overstatedStates += 1;
+      if (!state.granted && state.permission.level !== 'none') summary.understatedStates += 1;
     }
   }
+
+  const unmatchedLifeCycleIds = new Set<LifeCycleId>();
+  for (const [stateId, lifeCycleId] of reported.lifeCycleIdByStateId) {
+    if (!matchedStateIds.has(stateId)) unmatchedLifeCycleIds.add(lifeCycleId);
+  }
+  // rowCount counts rows; matched counts states. Duplicates were folded into a
+  // state, so they are not unmatched.
+  summary.unmatchedReportedRows = Math.max(
+    0,
+    reported.rowCount - reported.duplicateCount - matchedStateIds.size,
+  );
+  summary.unmatchedLifeCycleIds = [...unmatchedLifeCycleIds].sort((a, b) => a - b);
 
   return summary;
 }
