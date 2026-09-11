@@ -101,24 +101,39 @@ expect('the derivation is labelled on screen', note.includes('Derived'));
 // the presentational view is rendered directly against a real payload.
 const detail = await repository.getObjectTypeDetail(449698, 450001);
 const detailHtml = text(renderToString(<ObjectTypeDetailView detail={detail} />));
-expect('granted lifecycle is badged Granted', detailHtml.includes('Granted'));
-expect('non-granted lifecycle is badged Not granted', detailHtml.includes('Not granted'));
-expect('the per-state track renders', detailHtml.includes('state-track'));
-expect(
-  'reachable states are marked reachable',
-  detailHtml.includes('state--granted') && detailHtml.includes('Reachable by this role'),
-);
-expect(
-  'unreachable states are marked, not hidden',
-  detailHtml.includes('state--denied') && detailHtml.includes('Not reachable by this role'),
-);
+expect('granted lifecycle is labelled', detailHtml.includes('Lifecycle granted'));
+expect('non-granted lifecycle is labelled', detailHtml.includes('Lifecycle not granted'));
+expect('the per-state table renders', detailHtml.includes('perm-table'));
 expect(
   'every state of both lifecycles is present',
   ['Triage', 'Open', 'Investigation', 'Review', 'Closed', 'Raised', 'Escalated', 'Resolved'].every(
     (state) => detailHtml.includes(state),
   ),
 );
-expect('the lifecycle/state tally renders', detailHtml.includes('5 of 8 states reachable'));
+
+// The reported permission levels -- the whole point of the drill-down.
+expect('read & write states are labelled', detailHtml.includes('Read &amp; write'));
+expect('read-only states are labelled', detailHtml.includes('Read only'));
+expect('no-access states are labelled', detailHtml.includes('No access'));
+expect(
+  'states with no reported row are distinguished from no-access',
+  detailHtml.includes('Not reported'),
+);
+expect('capability flags render', detailHtml.includes('create') && detailHtml.includes('manage role'));
+expect('trigger counts render', detailHtml.includes('2 triggers'));
+expect('exit requirements render', detailHtml.includes('1 field') && detailHtml.includes('1 role'));
+expect(
+  'the reported roll-up renders',
+  detailHtml.includes('Reported by the API') && detailHtml.includes('2 read &amp; write'),
+);
+
+// Triage is granted by the lifecycle but reported as no access. Surfacing
+// that contradiction is the reason this feature exists.
+expect('a grant the API contradicts is flagged inline', detailHtml.includes('grant overstates'));
+expect(
+  'and explained above the table',
+  detailHtml.includes('reports no access at all'),
+);
 
 // A catalog with no states must warn without the user opening anything.
 const degraded = text(renderToString(<DerivationNotice note={buildDerivationNote(false)} />));

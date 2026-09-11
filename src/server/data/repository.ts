@@ -3,6 +3,9 @@ import type {
   GroupListItem,
   GroupMatrix,
   LifeCycleId,
+  LifeCycleStateId,
+  StatePermission,
+  StateRequirements,
   ObjectTypeAccessDetail,
   ObjectTypeId,
   Role,
@@ -15,11 +18,19 @@ import type {
 import { TtlCache } from '../http/cache.ts';
 import { mapWithConcurrency } from '../http/concurrency.ts';
 import { buildCatalogIndex, type CatalogIndex } from '../domain/catalogIndex.ts';
-import { buildCatalog, normalizeRole, normalizeUser, normalizeUserGroup } from '../domain/normalize.ts';
+import {
+  buildCatalog,
+  normalizeRole,
+  normalizeStatePermissions,
+  normalizeStateRequirements,
+  normalizeUser,
+  normalizeUserGroup,
+} from '../domain/normalize.ts';
 import {
   buildDerivationNote,
   buildObjectTypeAccessDetail,
   buildRoleAccess,
+  type ReportedPermissions,
 } from '../domain/access.ts';
 import type { ResolverDataSource } from './source.ts';
 
@@ -61,6 +72,8 @@ export class MatrixRepository {
   readonly #catalogCache: TtlCache<CachedCatalog>;
   readonly #groupCache: TtlCache<GroupBundle>;
   readonly #rolePermissionCache: TtlCache<LifeCycleId[]>;
+  readonly #statePermissionCache: TtlCache<Map<LifeCycleStateId, StatePermission>>;
+  readonly #requirementsCache: TtlCache<Map<LifeCycleStateId, StateRequirements>>;
   readonly #maxConcurrency: number;
   #catalogLoadedAt: string | null = null;
   #statesAvailable: boolean | null = null;
@@ -70,6 +83,8 @@ export class MatrixRepository {
     this.#catalogCache = new TtlCache<CachedCatalog>(cacheTtlMs);
     this.#groupCache = new TtlCache<GroupBundle>(cacheTtlMs);
     this.#rolePermissionCache = new TtlCache<LifeCycleId[]>(cacheTtlMs);
+    this.#statePermissionCache = new TtlCache<Map<LifeCycleStateId, StatePermission>>(cacheTtlMs);
+    this.#requirementsCache = new TtlCache<Map<LifeCycleStateId, StateRequirements>>(cacheTtlMs);
     this.#maxConcurrency = maxConcurrency;
   }
 
@@ -87,6 +102,8 @@ export class MatrixRepository {
     this.#catalogCache.clear();
     this.#groupCache.clear();
     this.#rolePermissionCache.clear();
+    this.#statePermissionCache.clear();
+    this.#requirementsCache.clear();
     this.#catalogLoadedAt = null;
     this.#statesAvailable = null;
   }
@@ -156,6 +173,32 @@ export class MatrixRepository {
     });
   }
 
+  /**
+   * Reported per-state permissions for one role on one object type.
+   *
+   * 1 upstream call per (role, object type) pair, then cached. This is the
+   * authoritative answer the lifecycle-grant inference only approximates.
+   */
+  async #statePermissions(
+    roleId: RoleId,
+    objectTypeId: ObjectTypeId,
+  ): Promise<Map<LifeCycleStateId, StatePermission>> {
+    return this.#statePermissionCache.resolve(`perm:${roleId}:${objectTypeId}`, async () => {
+      const rows = await this.#source.fetchRoleObjectTypePermissions(roleId, objectTypeId);
+      return normalizeStatePermissions(rows);
+    });
+  }
+
+  /** 1 upstream call per object type, shared across every role. */
+  async #stateRequirements(
+    objectTypeId: ObjectTypeId,
+  ): Promise<Map<LifeCycleStateId, StateRequirements>> {
+    return this.#requirementsCache.resolve(`req:${objectTypeId}`, async () => {
+      const payload = await this.#source.fetchStateRequirements(objectTypeId);
+      return normalizeStateRequirements(payload);
+    });
+  }
+
   async listGroups(): Promise<GroupListItem[]> {
     const bundle = await this.#groupBundle();
     return bundle.groups.map((group) => ({
@@ -211,11 +254,20 @@ export class MatrixRepository {
   }
 
   /**
-   * Served entirely from cache once the role has been fetched -- 0 extra calls.
+   * Drill-down for one object type under one role.
+   *
+   * Costs up to 2 upstream calls on a cold cache: the reported per-state
+   * permissions for this (role, object type) pair, and the state requirements
+   * for the object type (shared by every role). Both are cached, so reopening
+   * the same row is free, and the requirements call is amortised across roles.
    *
    * The role id is checked against roles that actually exist in some group
    * first (already-cached data, 0 calls). Without that, any integer a caller
-   * types would spend one upstream call and occupy a cache slot forever.
+   * types would spend upstream calls and occupy cache slots forever.
+   *
+   * If the permissions endpoint fails, the grant-derived view is still
+   * returned with `permissionsError` set -- a partial answer beats an error
+   * page, as long as the UI is honest about which half is missing.
    */
   async getObjectTypeDetail(
     roleId: RoleId,
@@ -226,8 +278,29 @@ export class MatrixRepository {
       throw new NotFoundError(`Role ${roleId} was not found in any user group`);
     }
 
-    const [index, grants] = await Promise.all([this.#catalog(), this.#roleGrants(roleId)]);
-    const detail = buildObjectTypeAccessDetail(index, grants, objectTypeId);
+    const [index, grants, permissions, requirements] = await Promise.all([
+      this.#catalog(),
+      this.#roleGrants(roleId),
+      this.#statePermissions(roleId, objectTypeId).then(
+        (value) => ({ value, error: null as string | null }),
+        (cause: unknown) => ({
+          value: new Map<LifeCycleStateId, StatePermission>(),
+          error: cause instanceof Error ? cause.message : String(cause),
+        }),
+      ),
+      // Requirements are supplementary; their absence is not worth surfacing.
+      this.#stateRequirements(objectTypeId).catch(
+        () => new Map<LifeCycleStateId, StateRequirements>(),
+      ),
+    ]);
+
+    const reported: ReportedPermissions = {
+      byStateId: permissions.value,
+      requirementsByStateId: requirements,
+      error: permissions.error,
+    };
+
+    const detail = buildObjectTypeAccessDetail(index, grants, objectTypeId, reported);
     if (detail === null) {
       throw new NotFoundError(`Object type ${objectTypeId} was not found`);
     }

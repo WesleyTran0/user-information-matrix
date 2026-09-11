@@ -147,3 +147,68 @@ export type ApiRolesResponse = ApiEnvelope<ApiRole[]>;
 export type ApiObjectLifeCyclesResponse = ApiEnvelope<ApiObjectLifeCycle[]>;
 export type ApiObjectTypesResponse = ApiEnvelope<ApiObjectType[]>;
 export type ApiRoleLifeCyclePermissionsResponse = ApiEnvelope<ApiRoleLifeCyclePermission[]>;
+
+/* -------------------------------------------------------------------------- */
+/* Per-state role permissions (documented in update.md)                       */
+/* -------------------------------------------------------------------------- */
+
+/** A trigger this role may fire while the object sits in a given state. */
+export interface ApiRolePermissionTrigger {
+  id: number;
+  rolePermissionId: number;
+  triggerId: number;
+  objectLifeCycleId: number | null;
+  org: number;
+  externalRefId: string;
+}
+
+/**
+ * GET /data/rolePermissions/role/{roleId}/objectType/{objectTypeId}
+ *
+ * One row per lifecycle state. `permission` is an access level, observed as
+ * 0 = none, 1 = read, 2 = read and write; the capability flags are separate
+ * booleans alongside it. `triggers` is present only on rows that have any.
+ */
+export interface ApiRolePermissionRow {
+  id: number;
+  permission: number;
+  canBulkLaunch: boolean;
+  canCreate: boolean;
+  canDelete: boolean;
+  canMerge: boolean;
+  canManageRole: boolean;
+  roleId: number;
+  objectTypeId: number;
+  objectLifeCycleId: number;
+  objectLifeCycleStateId: number;
+  formId: number | null;
+  org: number;
+  externalRefId: string;
+  assigned: boolean;
+  triggers?: ApiRolePermissionTrigger[];
+}
+
+/**
+ * GET /object/objectType/{objectTypeId}/objectLifeCycle/stateRequired
+ *
+ * Keyed by state id. Each row marks something required to leave that state.
+ * `type` distinguishes them: rows carrying a `fieldId` require a field, rows
+ * carrying a `roleId` require a role assignment. The documented `deep=true`
+ * variant returns an identical payload on the deployment we tested, so it is
+ * not used.
+ */
+export interface ApiStateRequiredRow {
+  id: number;
+  objectLifeCycleStateId: number;
+  objectLifeCycleId: number;
+  fieldId: number | null;
+  relationshipTypeId: number | null;
+  propertyId: number | null;
+  roleId: number | null;
+  type: number;
+  org: number;
+}
+
+export type ApiRolePermissionsResponse = ApiEnvelope<ApiRolePermissionRow[]>;
+/** Not enveloped: this endpoint returns the keyed map at the top level. */
+export type ApiStateRequiredResponse = Record<string, ApiStateRequiredRow[]>;

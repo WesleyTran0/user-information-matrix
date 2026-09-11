@@ -3,6 +3,10 @@ import type {
   DerivationNote,
   LifeCycleAccess,
   LifeCycleId,
+  LifeCycleStateId,
+  PermissionSummary,
+  StatePermission,
+  StateRequirements,
   ObjectTypeAccess,
   ObjectTypeAccessDetail,
   ObjectTypeId,
@@ -13,9 +17,16 @@ import type {
 import type { CatalogIndex } from './catalogIndex.ts';
 
 /**
- * How role permissions are reconstructed.
+ * How the object-type list for a role is reconstructed.
  *
- * Resolver exposes no per-state permission endpoint. What it does expose is
+ * NOTE: this concerns the *summary* only. Per-state access is no longer
+ * inferred -- `/data/rolePermissions/role/{roleId}/objectType/{objectTypeId}`
+ * reports it directly and is merged in by `buildObjectTypeAccessDetail`.
+ * Measured against the live API, a role holding a lifecycle grant had level 0
+ * (no access) in 19 of that lifecycle's 25 states, so the inference below is
+ * an upper bound and is labelled as such in the UI.
+ *
+ * For the summary, what the API exposes is
  * `/data/rolePermissions/objectLifeCycles/role/{roleId}` -- the set of object
  * lifecycles a role has been granted. Each lifecycle carries an `objectTypeId`
  * and (with includeStates=true) its states, so:
@@ -30,8 +41,7 @@ import type { CatalogIndex } from './catalogIndex.ts';
  * the inference, and it is reported to the client in `DerivationNote`.
  */
 const BASE_CAVEATS: readonly string[] = [
-  'The API exposes no per-state permission endpoint, so state-level access is inferred from the lifecycle grant.',
-  'Access verbs (read / edit / delete) are not exposed by these endpoints and are therefore not shown.',
+  'This summary is derived from lifecycle grants, which is an upper bound: open an object type to see the access levels the API actually reports per state, which are frequently narrower.',
   'An object type can own several lifecycles; partial coverage means only some of them are granted.',
   'Object type <-> lifecycle association is itself merged from two upstream pointers (objectType.objectLifeCycleId and objectLifeCycle.objectTypeId), which do not always agree. Coverage is measured against that merged set.',
 ];
@@ -47,7 +57,7 @@ export function buildDerivationNote(statesAvailable: boolean): DerivationNote {
   return {
     method: 'lifecycle-grant-implies-all-states',
     summary:
-      'Access is granted per object lifecycle, not per state. Every state of a granted lifecycle is shown as reachable; states of a non-granted lifecycle on the same object type are not.',
+      'Roles are granted whole lifecycles, so this list shows the object types a role can reach at all. It is an upper bound: the per-state access levels inside each object type are reported by the API and are often narrower than the grant suggests.',
     caveats: statesAvailable ? [...BASE_CAVEATS] : [NO_STATES_CAVEAT, ...BASE_CAVEATS],
     statesAvailable,
   };
@@ -133,10 +143,29 @@ export function buildRoleAccess(
  *
  * O(lifecycles on the object type + their states).
  */
+/**
+ * Per-state facts reported by the API, as opposed to inferred from the grant.
+ *
+ * `byStateId` empty with `error === null` means the endpoint answered but had
+ * nothing for this pair, which is different from it being unreachable.
+ */
+export interface ReportedPermissions {
+  byStateId: ReadonlyMap<LifeCycleStateId, StatePermission>;
+  requirementsByStateId: ReadonlyMap<LifeCycleStateId, StateRequirements>;
+  error: string | null;
+}
+
+const NO_REPORTED_PERMISSIONS: ReportedPermissions = {
+  byStateId: new Map(),
+  requirementsByStateId: new Map(),
+  error: null,
+};
+
 export function buildObjectTypeAccessDetail(
   index: CatalogIndex,
   grantedLifeCycleIds: readonly LifeCycleId[],
   objectTypeId: ObjectTypeId,
+  reported: ReportedPermissions = NO_REPORTED_PERMISSIONS,
 ): ObjectTypeAccessDetail | null {
   const objectType = index.objectTypeById.get(objectTypeId);
   if (objectType === undefined) return null;
@@ -156,7 +185,14 @@ export function buildObjectTypeAccessDetail(
     totalStateCount += lifeCycle.states.length;
     if (granted) grantedStateCount += lifeCycle.states.length;
 
-    const states: StateAccess[] = lifeCycle.states.map((state) => ({ ...state, granted }));
+    const states: StateAccess[] = lifeCycle.states.map((state) => ({
+      ...state,
+      granted,
+      // The reported permission wins where it exists; `granted` stays as the
+      // cheap inference so the two can be compared in the UI.
+      permission: reported.byStateId.get(state.id) ?? null,
+      requirements: reported.requirementsByStateId.get(state.id) ?? null,
+    }));
     lifeCycles.push({
       lifeCycleId,
       name: lifeCycle.name,
@@ -171,6 +207,8 @@ export function buildObjectTypeAccessDetail(
     a.granted === b.granted ? a.name.localeCompare(b.name) : Number(b.granted) - Number(a.granted),
   );
 
+  const permissionSummary = summarizePermissions(lifeCycles);
+
   return {
     objectTypeId,
     name: objectType.name,
@@ -184,5 +222,45 @@ export function buildObjectTypeAccessDetail(
     grantedStateCount,
     totalStateCount,
     lifeCycles,
+    permissionSummary,
+    permissionsError: reported.error,
   };
+}
+
+/** Counts states by reported level. O(states). */
+function summarizePermissions(lifeCycles: readonly LifeCycleAccess[]): PermissionSummary {
+  const summary: PermissionSummary = {
+    readWrite: 0,
+    read: 0,
+    none: 0,
+    unreported: 0,
+    reported: false,
+  };
+
+  for (const lifeCycle of lifeCycles) {
+    for (const state of lifeCycle.states) {
+      if (state.permission === null) {
+        summary.unreported += 1;
+        continue;
+      }
+      summary.reported = true;
+      switch (state.permission.level) {
+        case 'read-write':
+          summary.readWrite += 1;
+          break;
+        case 'read':
+          summary.read += 1;
+          break;
+        case 'none':
+          summary.none += 1;
+          break;
+        default:
+          // An unrecognised level is not "no access"; leave it uncounted here
+          // and let the per-state row show the raw value.
+          summary.unreported += 1;
+      }
+    }
+  }
+
+  return summary;
 }

@@ -4,6 +4,8 @@ import type {
   ApiObjectLifeCycle,
   ApiObjectType,
   ApiRoleLifeCyclePermission,
+  ApiRolePermissionRow,
+  ApiStateRequiredResponse,
   ApiUser,
   ApiUserGroup,
 } from '../types/resolver-api.ts';
@@ -20,6 +22,10 @@ export const RESOLVER_ENDPOINTS = {
   objectTypes: '/object/objectType',
   roleLifeCyclePermissions: (roleId: number) =>
     `/data/rolePermissions/objectLifeCycles/role/${roleId}`,
+  roleObjectTypePermissions: (roleId: number, objectTypeId: number) =>
+    `/data/rolePermissions/role/${roleId}/objectType/${objectTypeId}`,
+  stateRequirements: (objectTypeId: number) =>
+    `/object/objectType/${objectTypeId}/objectLifeCycle/stateRequired`,
 } as const;
 
 export class LiveResolverSource implements ResolverDataSource {
@@ -59,6 +65,22 @@ export class LiveResolverSource implements ResolverDataSource {
   fetchRoleLifeCyclePermissions(roleId: number): Promise<ApiRoleLifeCyclePermission[]> {
     return this.#client.getData<ApiRoleLifeCyclePermission[]>(
       RESOLVER_ENDPOINTS.roleLifeCyclePermissions(roleId),
+    );
+  }
+
+  fetchRoleObjectTypePermissions(
+    roleId: number,
+    objectTypeId: number,
+  ): Promise<ApiRolePermissionRow[]> {
+    return this.#client.getData<ApiRolePermissionRow[]>(
+      RESOLVER_ENDPOINTS.roleObjectTypePermissions(roleId, objectTypeId),
+    );
+  }
+
+  /** Not enveloped upstream, so this one goes through getRaw. */
+  fetchStateRequirements(objectTypeId: number): Promise<ApiStateRequiredResponse> {
+    return this.#client.getRaw<ApiStateRequiredResponse>(
+      RESOLVER_ENDPOINTS.stateRequirements(objectTypeId),
     );
   }
 }

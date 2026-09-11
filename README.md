@@ -11,13 +11,22 @@ lifecycle*. The matrix is rebuilt from three facts:
 | source | gives |
 | --- | --- |
 | `/data/rolePermissions/objectLifeCycles/role/{roleId}` | the lifecycle ids granted to a role |
+| `/data/rolePermissions/role/{roleId}/objectType/{objectTypeId}` | **the reported access level and capabilities per state** |
+| `/object/objectType/{objectTypeId}/objectLifeCycle/stateRequired` | what each state requires before it can be left |
 | `/object/objectLifeCycle?includeStates=true` | each lifecycle's `objectTypeId` and its states |
 | `/object/objectType` | every object type, and which lifecycles belong to it |
 
-A grant is lifecycle-wide, so **every state of a granted lifecycle is reachable**;
-states of a non-granted lifecycle on the same object type are not. An object type
-owning several lifecycles is what produces *partial* coverage. The UI labels this
-as derived rather than reported — see the "Derived" banner above the role list.
+The group view is built from the **grant** alone, which is cheap but an *upper
+bound*: it shows the object types a role can reach at all. Measured against the
+live API, a role holding a lifecycle grant had access level 0 — none — in 19 of
+that lifecycle's 25 states. So the drill-down asks the permissions endpoint and
+shows what the API actually reports per state: **read & write / read only / no
+access**, plus the capability flags (create, delete, merge, manage role, bulk
+launch), the triggers the role may fire, and what each state requires to exit.
+
+Where the grant claims a state the API denies, the UI says so inline rather
+than quietly preferring one source. The "Derived" banner above the role list
+marks the summary as the inference it is.
 
 ## Upstream call budget
 
@@ -27,9 +36,9 @@ Per cache window (`CACHE_TTL_MS`, default 5 min):
 - **2** catalog calls — `/object/objectType`, `/object/objectLifeCycle?includeStates=true`
 - **1** call per *distinct* role inspected — shared roles are fetched once, and
   the cache is single-flight so concurrent requests for the same role collapse
-
-Object-type drill-downs cost **0** additional calls; they are computed from the
-catalog and the role's cached grants.
+- **2** per object-type drill-down, cold: the reported permissions for that
+  (role, object type) pair, and the object type's exit requirements — the
+  latter shared by every role, so it amortises. Reopening a drill-down is free.
 
 ## Running it
 

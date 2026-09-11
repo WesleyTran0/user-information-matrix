@@ -95,9 +95,55 @@ export interface Catalog {
  */
 export type AccessCoverage = 'full' | 'partial' | 'none';
 
-/** A lifecycle state plus whether the role in question reaches it. */
+/**
+ * Access level reported by the API for one role in one state.
+ *
+ * Observed values upstream: 0 = none, 1 = read, 2 = read and write. Anything
+ * unrecognised is surfaced as `unknown` rather than guessed at.
+ */
+export type PermissionLevel = 'none' | 'read' | 'read-write' | 'unknown';
+
+/** The capability flags that travel alongside the access level. */
+export interface StateCapabilities {
+  canCreate: boolean;
+  canDelete: boolean;
+  canMerge: boolean;
+  canManageRole: boolean;
+  canBulkLaunch: boolean;
+}
+
+/**
+ * What a role may actually do in one state -- reported by the API, not
+ * inferred. Absent when the permissions endpoint returned no row for the
+ * state, which is meaningful and is shown as such rather than as "no access".
+ */
+export interface StatePermission {
+  level: PermissionLevel;
+  /** The raw upstream value, kept so an unrecognised level is still visible. */
+  rawLevel: number;
+  capabilities: StateCapabilities;
+  /** Trigger ids this role may fire in this state. Names are not exposed. */
+  triggerIds: number[];
+  formId: number | null;
+}
+
+/** What a state requires before it can be left. */
+export interface StateRequirements {
+  fieldCount: number;
+  roleCount: number;
+  otherCount: number;
+}
+
+/** A lifecycle state plus what the role in question can do in it. */
 export interface StateAccess extends LifeCycleState {
+  /**
+   * Whether the role holds the lifecycle grant covering this state. This is
+   * the cheap inference; `permission` is the authoritative answer when present.
+   */
   granted: boolean;
+  /** Null when the permissions endpoint reported nothing for this state. */
+  permission: StatePermission | null;
+  requirements: StateRequirements | null;
 }
 
 /** One lifecycle of one object type, resolved for one role. */
@@ -124,10 +170,27 @@ export interface ObjectTypeAccess {
   totalStateCount: number;
 }
 
+/** Counts of states by reported access level, for the drill-down summary. */
+export interface PermissionSummary {
+  readWrite: number;
+  read: number;
+  none: number;
+  unreported: number;
+  /** True when at least one state carried a reported permission row. */
+  reported: boolean;
+}
+
 /** Drill-down payload behind a single object type row. */
 export interface ObjectTypeAccessDetail extends ObjectTypeAccess {
   description: string | null;
   lifeCycles: LifeCycleAccess[];
+  /** Roll-up of the reported per-state permissions across all lifecycles. */
+  permissionSummary: PermissionSummary;
+  /**
+   * Set when the permissions endpoint could not be reached. The lifecycle-grant
+   * view is still rendered, flagged as inference-only.
+   */
+  permissionsError: string | null;
 }
 
 export interface RoleAccess {

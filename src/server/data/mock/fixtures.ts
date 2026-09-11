@@ -18,6 +18,8 @@ import type {
   ApiObjectLifeCycle,
   ApiObjectType,
   ApiRoleLifeCyclePermission,
+  ApiRolePermissionRow,
+  ApiStateRequiredRow,
   ApiUser,
   ApiUserGroup,
 } from '../../types/resolver-api.ts';
@@ -368,4 +370,117 @@ export const MOCK_ROLE_LIFE_CYCLE_PERMISSIONS: Record<number, ApiRoleLifeCyclePe
   449710: [603174].map((id) => ({ objectLifeCycleId: id })),
   449680: [710789, 603272, 999001, 888888].map((id) => ({ objectLifeCycleId: id })),
   449679: [],
+};
+
+/* -------------------------------------------------------------------------- */
+/* Per-state role permissions                                                 */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * State ids follow the `lifeCycle()` helper above: `lifeCycleId * 100 + ordinal`.
+ *
+ * These rows deliberately encode the discrepancy observed against the live API:
+ * holding a lifecycle grant does NOT mean access in every state of it. Incident
+ * Owner is granted the Incident Workflow lifecycle, yet has no access at all in
+ * its Triage state and only read access in two others. Any code that treats a
+ * lifecycle grant as blanket state access will fail these fixtures.
+ */
+function permissionRow(
+  roleId: number,
+  objectTypeId: number,
+  lifeCycleId: number,
+  ordinal: number,
+  permission: number,
+  capabilities: Partial<
+    Pick<
+      ApiRolePermissionRow,
+      'canBulkLaunch' | 'canCreate' | 'canDelete' | 'canMerge' | 'canManageRole'
+    >
+  > = {},
+  triggerIds: number[] = [],
+): ApiRolePermissionRow {
+  const stateId = lifeCycleId * 100 + ordinal;
+  const row: ApiRolePermissionRow = {
+    id: 23_000_000 + stateId,
+    permission,
+    canBulkLaunch: capabilities.canBulkLaunch ?? false,
+    canCreate: capabilities.canCreate ?? false,
+    canDelete: capabilities.canDelete ?? false,
+    canMerge: capabilities.canMerge ?? false,
+    canManageRole: capabilities.canManageRole ?? false,
+    roleId,
+    objectTypeId,
+    objectLifeCycleId: lifeCycleId,
+    objectLifeCycleStateId: stateId,
+    formId: null,
+    org: ORG,
+    externalRefId: `rp-${roleId}-${stateId}`,
+    assigned: false,
+  };
+  if (triggerIds.length > 0) {
+    row.triggers = triggerIds.map((triggerId, index) => ({
+      id: 13_000_000 + stateId + index,
+      rolePermissionId: row.id,
+      triggerId,
+      objectLifeCycleId: lifeCycleId,
+      org: ORG,
+      externalRefId: `trg-${stateId}-${triggerId}`,
+    }));
+  }
+  return row;
+}
+
+/** Keyed `${roleId}:${objectTypeId}`. */
+export const MOCK_ROLE_OBJECT_TYPE_PERMISSIONS: Record<string, ApiRolePermissionRow[]> = {
+  // Incident Owner on Incident: granted the workflow lifecycle, but NOT
+  // uniformly across its states, and nothing at all on the escalation one.
+  '449698:450001': [
+    permissionRow(449698, 450001, 603174, 0, 0),
+    permissionRow(449698, 450001, 603174, 1, 2, { canCreate: true, canManageRole: true }, [3193189, 3193190]),
+    permissionRow(449698, 450001, 603174, 2, 2, { canManageRole: true }, [3193201]),
+    permissionRow(449698, 450001, 603174, 3, 1),
+    permissionRow(449698, 450001, 603174, 4, 1, { canMerge: true }),
+  ],
+  '449698:450002': [
+    permissionRow(449698, 450002, 992693, 0, 2, { canCreate: true }),
+    permissionRow(449698, 450002, 992693, 1, 2),
+    permissionRow(449698, 450002, 992693, 2, 1),
+    permissionRow(449698, 450002, 992693, 3, 1),
+  ],
+  // Full-power role: write everywhere, with delete.
+  '449785:450001': [0, 1, 2, 3, 4].map((ordinal) =>
+    permissionRow(449785, 450001, 603174, ordinal, 2, {
+      canCreate: true,
+      canDelete: true,
+      canMerge: true,
+      canManageRole: true,
+      canBulkLaunch: true,
+    }),
+  ),
+  // Read-only observer.
+  '449710:450001': [0, 1, 2, 3, 4].map((ordinal) =>
+    permissionRow(449710, 450001, 603174, ordinal, 1),
+  ),
+  // 449680 (Risk Champion) on Cyber Control is intentionally absent, so the
+  // "upstream returned no permission rows" path is exercised.
+};
+
+/** Keyed by object type id, then by state id -- matches the upstream shape. */
+export const MOCK_STATE_REQUIREMENTS: Record<number, Record<string, ApiStateRequiredRow[]>> = {
+  450001: {
+    // Investigation requires a field and a role assignment before it can leave.
+    '60317402': [
+      { id: 796559, objectLifeCycleStateId: 60317402, objectLifeCycleId: 603174,
+        fieldId: 3146729, relationshipTypeId: null, propertyId: null, roleId: null,
+        type: 1, org: ORG },
+      { id: 500074, objectLifeCycleStateId: 60317402, objectLifeCycleId: 603174,
+        fieldId: null, relationshipTypeId: null, propertyId: null, roleId: 449681,
+        type: 4, org: ORG },
+    ],
+    '60317404': [
+      { id: 796570, objectLifeCycleStateId: 60317404, objectLifeCycleId: 603174,
+        fieldId: 3146733, relationshipTypeId: null, propertyId: null, roleId: null,
+        type: 1, org: ORG },
+    ],
+  },
 };

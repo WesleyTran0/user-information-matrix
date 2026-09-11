@@ -134,6 +134,34 @@ async function startUpstream(): Promise<Upstream> {
       return;
     }
 
+    // Per-state permissions: one row per state, mirroring the real payload.
+    const permMatch = /^\/data\/rolePermissions\/role\/(\d+)\/objectType\/(\d+)$/.exec(url.pathname);
+    if (permMatch !== null) {
+      const roleId = Number(permMatch[1]);
+      const objectTypeId = Number(permMatch[2]);
+      send([
+        { id: 1, permission: 0, canBulkLaunch: false, canCreate: false, canDelete: false,
+          canMerge: false, canManageRole: false, roleId, objectTypeId, objectLifeCycleId: 55,
+          objectLifeCycleStateId: 1, formId: null, org: 1, externalRefId: 'rp1', assigned: false },
+        { id: 2, permission: 2, canBulkLaunch: false, canCreate: true, canDelete: false,
+          canMerge: false, canManageRole: true, roleId, objectTypeId, objectLifeCycleId: 55,
+          objectLifeCycleStateId: 2, formId: null, org: 1, externalRefId: 'rp2', assigned: false,
+          triggers: [{ id: 9, rolePermissionId: 2, triggerId: 4242, objectLifeCycleId: 55,
+            org: 1, externalRefId: 'trg1' }] },
+      ]);
+      return;
+    }
+
+    // stateRequired is NOT enveloped upstream -- it returns the map directly.
+    if (/^\/object\/objectType\/\d+\/objectLifeCycle\/stateRequired$/.test(url.pathname)) {
+      res.setHeader('content-type', 'application/json');
+      res.end(JSON.stringify({
+        '2': [{ id: 7, objectLifeCycleStateId: 2, objectLifeCycleId: 55, fieldId: 31,
+          relationshipTypeId: null, propertyId: null, roleId: null, type: 1, org: 1 }],
+      }));
+      return;
+    }
+
     const roleMatch = /^\/data\/rolePermissions\/objectLifeCycles\/role\/(\d+)$/.exec(url.pathname);
     if (roleMatch !== null) {
       if (Number(roleMatch[1]) === state.failRoleId) {
@@ -261,10 +289,30 @@ try {
       check('states were requested explicitly',
         upstream.seen.some((entry) => entry.path === '/object/objectLifeCycle?includeStates=true'));
 
-      await getJson(`${app.baseUrl}/api/roles/77/object-types/9`);
+      // The drill-down now fetches the reported per-state permissions (per
+      // role + object type) and the object type's exit requirements (shared
+      // across roles): 2 calls cold, 0 warm.
+      const drill = (await getJson(`${app.baseUrl}/api/roles/77/object-types/9`)).body;
       const afterDrill = (await getJson(`${app.baseUrl}/api/meta`)).body;
-      check('drill-down issues no upstream call', afterDrill.upstreamCallCount === 7,
+      check('drill-down costs 2 upstream calls cold', afterDrill.upstreamCallCount === 9,
         afterDrill.upstreamCallCount);
+
+      check('reported access levels survive the live client',
+        drill.permissionSummary?.readWrite === 1 && drill.permissionSummary?.none === 1,
+        drill.permissionSummary);
+      const states = drill.lifeCycles?.[0]?.states ?? [];
+      check('capabilities and triggers survive the round trip',
+        states.some((state: any) => state.permission?.capabilities?.canManageRole === true &&
+          state.permission?.triggerIds?.length === 1),
+        states.map((state: any) => state.permission));
+      check('exit requirements attach to the right state',
+        states.some((state: any) => state.requirements?.fieldCount === 1),
+        states.map((state: any) => state.requirements));
+
+      await getJson(`${app.baseUrl}/api/roles/77/object-types/9`);
+      const afterSecond = (await getJson(`${app.baseUrl}/api/meta`)).body;
+      check('reopening the same drill-down is free', afterSecond.upstreamCallCount === 9,
+        afterSecond.upstreamCallCount);
     } finally {
       stopApp(app);
     }

@@ -1,6 +1,8 @@
 import type {
   ApiGroupRole,
   ApiObjectLifeCycle,
+  ApiRolePermissionRow,
+  ApiStateRequiredRow,
   ApiObjectLifeCycleState,
   ApiObjectType,
   ApiUser,
@@ -11,6 +13,10 @@ import type {
   LifeCycle,
   LifeCycleId,
   LifeCycleState,
+  LifeCycleStateId,
+  PermissionLevel,
+  StatePermission,
+  StateRequirements,
   ObjectType,
   ObjectTypeId,
   Role,
@@ -159,4 +165,78 @@ export function buildCatalog(
   }));
 
   return { objectTypes, lifeCycles };
+}
+
+/* -------------------------------------------------------------------------- */
+/* Reported per-state permissions                                             */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Upstream reports the access level as a bare integer. Observed values are
+ * 0, 1 and 2; anything else maps to `unknown` so an unrecognised level is
+ * visible rather than silently downgraded to "no access".
+ */
+function toPermissionLevel(raw: number): PermissionLevel {
+  switch (raw) {
+    case 0:
+      return 'none';
+    case 1:
+      return 'read';
+    case 2:
+      return 'read-write';
+    default:
+      return 'unknown';
+  }
+}
+
+/** Indexes the permission rows by state id. O(rows + triggers). */
+export function normalizeStatePermissions(
+  rows: readonly ApiRolePermissionRow[],
+): Map<LifeCycleStateId, StatePermission> {
+  const byStateId = new Map<LifeCycleStateId, StatePermission>();
+  for (const row of rows) {
+    byStateId.set(row.objectLifeCycleStateId, {
+      level: toPermissionLevel(row.permission),
+      rawLevel: row.permission,
+      capabilities: {
+        canCreate: row.canCreate,
+        canDelete: row.canDelete,
+        canMerge: row.canMerge,
+        canManageRole: row.canManageRole,
+        canBulkLaunch: row.canBulkLaunch,
+      },
+      // Only rows that have any triggers carry the array at all.
+      triggerIds: (row.triggers ?? []).map((trigger) => trigger.triggerId),
+      formId: row.formId,
+    });
+  }
+  return byStateId;
+}
+
+/**
+ * Collapses the requirement rows into counts per state.
+ *
+ * `type` distinguishes the kinds: rows carrying a fieldId require a field,
+ * rows carrying a roleId require a role assignment. Anything else is counted
+ * separately rather than guessed at.
+ */
+export function normalizeStateRequirements(
+  payload: Record<string, readonly ApiStateRequiredRow[]>,
+): Map<LifeCycleStateId, StateRequirements> {
+  const byStateId = new Map<LifeCycleStateId, StateRequirements>();
+  for (const [key, rows] of Object.entries(payload)) {
+    const stateId = Number.parseInt(key, 10);
+    if (!Number.isFinite(stateId) || !Array.isArray(rows)) continue;
+
+    let fieldCount = 0;
+    let roleCount = 0;
+    let otherCount = 0;
+    for (const row of rows) {
+      if (row.fieldId !== null) fieldCount += 1;
+      else if (row.roleId !== null) roleCount += 1;
+      else otherCount += 1;
+    }
+    byStateId.set(stateId, { fieldCount, roleCount, otherCount });
+  }
+  return byStateId;
 }

@@ -43,6 +43,20 @@ export class ResolverClient {
 
   /** GETs `path` and unwraps the `{ data }` envelope. */
   async getData<TData>(path: string): Promise<TData> {
+    const payload = await this.getRaw<unknown>(path);
+    if (payload === null || typeof payload !== 'object' || !('data' in payload)) {
+      throw new ResolverApiError(`Upstream payload for ${path} has no "data" key`, 502, path);
+    }
+    return (payload as ApiEnvelope<TData>).data;
+  }
+
+  /**
+   * GETs `path` and returns the body as-is.
+   *
+   * Not every endpoint uses the `{ data }` envelope -- the stateRequired one
+   * returns its keyed map at the top level.
+   */
+  async getRaw<TPayload>(path: string): Promise<TPayload> {
     const url = `${this.#baseUrl}${path}`;
     this.#callCount += 1;
 
@@ -77,10 +91,6 @@ export class ResolverClient {
       throw new ResolverApiError(`Upstream returned non-JSON for ${path}`, 502, path);
     }
 
-    if (payload === null || typeof payload !== 'object' || !('data' in payload)) {
-      throw new ResolverApiError(`Upstream payload for ${path} has no "data" key`, 502, path);
-    }
-
-    return (payload as ApiEnvelope<TData>).data;
+    return payload as TPayload;
   }
 }

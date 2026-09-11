@@ -4,6 +4,8 @@ import type {
   ApiObjectLifeCycle,
   ApiObjectType,
   ApiRoleLifeCyclePermission,
+  ApiRolePermissionRow,
+  ApiStateRequiredResponse,
   ApiUser,
   ApiUserGroup,
 } from '../types/resolver-api.ts';
@@ -26,4 +28,13 @@ export interface ResolverDataSource {
   fetchObjectLifeCycles(includeStates: boolean): Promise<ApiObjectLifeCycle[]>;
   fetchObjectTypes(): Promise<ApiObjectType[]>;
   fetchRoleLifeCyclePermissions(roleId: number): Promise<ApiRoleLifeCyclePermission[]>;
+
+  /** Per-state permissions for one role on one object type. */
+  fetchRoleObjectTypePermissions(
+    roleId: number,
+    objectTypeId: number,
+  ): Promise<ApiRolePermissionRow[]>;
+
+  /** What each state of an object type requires, keyed by state id. */
+  fetchStateRequirements(objectTypeId: number): Promise<ApiStateRequiredResponse>;
 }

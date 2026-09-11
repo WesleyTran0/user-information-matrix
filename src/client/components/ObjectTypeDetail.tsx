@@ -8,6 +8,7 @@ import type {
 } from '../../shared/types/domain.ts';
 import { CoverageBadge } from './CoverageBadge.tsx';
 import { Message } from './Message.tsx';
+import { StatePermissionTable } from './StatePermissionTable.tsx';
 
 function LifeCycleRow({ lifeCycle }: { lifeCycle: LifeCycleAccess }) {
   return (
@@ -15,29 +16,13 @@ function LifeCycleRow({ lifeCycle }: { lifeCycle: LifeCycleAccess }) {
       <div className="lifecycle__head">
         <span className="lifecycle__name">{lifeCycle.name}</span>
         <span className={`badge ${lifeCycle.granted ? 'badge--full' : 'badge--none'}`}>
-          {lifeCycle.granted ? 'Granted' : 'Not granted'}
+          {lifeCycle.granted ? 'Lifecycle granted' : 'Lifecycle not granted'}
         </span>
       </div>
       {lifeCycle.description !== null && (
         <p className="lifecycle__description">{lifeCycle.description}</p>
       )}
-      {lifeCycle.states.length === 0 ? (
-        <p className="muted">
-          This lifecycle reported no states, so no state-level access can be shown.
-        </p>
-      ) : (
-        <ol className="state-track">
-          {lifeCycle.states.map((state) => (
-            <li
-              key={state.id}
-              className={`state ${state.granted ? 'state--granted' : 'state--denied'}`}
-              title={state.granted ? 'Reachable by this role' : 'Not reachable by this role'}
-            >
-              {state.name}
-            </li>
-          ))}
-        </ol>
-      )}
+      <StatePermissionTable lifeCycle={lifeCycle} />
     </li>
   );
 }
@@ -56,11 +41,43 @@ export function ObjectTypeDetailView({ detail }: { detail: ObjectTypeAccessDetai
         <CoverageBadge coverage={detail.coverage} />
         <span className="muted">
           {detail.grantedLifeCycleCount} of {detail.totalLifeCycleCount}{' '}
-          {detail.totalLifeCycleCount === 1 ? 'lifecycle' : 'lifecycles'} ·{' '}
-          {detail.grantedStateCount} of {detail.totalStateCount} states reachable
+          {detail.totalLifeCycleCount === 1 ? 'lifecycle' : 'lifecycles'} granted
         </span>
       </div>
       {detail.description !== null && <p className="detail__description">{detail.description}</p>}
+
+      {detail.permissionsError !== null && (
+        <p className="warning">
+          The per-state permissions could not be loaded, so only the lifecycle grant is shown
+          below — treat it as an upper bound. ({detail.permissionsError})
+        </p>
+      )}
+
+      {detail.permissionSummary.reported && (
+        <p className="detail__reported">
+          <strong>Reported by the API:</strong>{' '}
+          <span className="perm perm--rw">{detail.permissionSummary.readWrite} read &amp; write</span>{' '}
+          <span className="perm perm--read">{detail.permissionSummary.read} read only</span>{' '}
+          <span className="perm perm--none">{detail.permissionSummary.none} no access</span>
+          {detail.permissionSummary.unreported > 0 && (
+            <>
+              {' '}
+              <span className="perm perm--unreported">
+                {detail.permissionSummary.unreported} not reported
+              </span>
+            </>
+          )}
+        </p>
+      )}
+
+      {overstatedCount(detail) > 0 && (
+        <p className="warning">
+          The lifecycle grant covers {overstatedCount(detail)}{' '}
+          {overstatedCount(detail) === 1 ? 'state' : 'states'} where the API reports no access at
+          all. The summary above the role list counts those as reachable; this table is the
+          authoritative answer.
+        </p>
+      )}
       <ul className="lifecycle-list">
         {detail.lifeCycles.map((lifeCycle) => (
           <LifeCycleRow key={lifeCycle.lifeCycleId} lifeCycle={lifeCycle} />
@@ -81,6 +98,17 @@ export function ObjectTypeDetailView({ detail }: { detail: ObjectTypeAccessDetai
  * clear -- reload the page to pick up a changed catalog.
  */
 const detailCache = new Map<string, ObjectTypeAccessDetail>();
+
+/** States the grant claims but the API denies -- the gap worth calling out. */
+function overstatedCount(detail: ObjectTypeAccessDetail): number {
+  let count = 0;
+  for (const lifeCycle of detail.lifeCycles) {
+    for (const state of lifeCycle.states) {
+      if (state.granted && state.permission?.level === 'none') count += 1;
+    }
+  }
+  return count;
+}
 
 interface ObjectTypeDetailProps {
   roleId: RoleId;

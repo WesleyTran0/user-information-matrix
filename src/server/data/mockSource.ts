@@ -4,6 +4,8 @@ import type {
   ApiObjectLifeCycle,
   ApiObjectType,
   ApiRoleLifeCyclePermission,
+  ApiRolePermissionRow,
+  ApiStateRequiredResponse,
   ApiUser,
   ApiUserGroup,
 } from '../types/resolver-api.ts';
@@ -14,6 +16,8 @@ import {
   MOCK_OBJECT_LIFE_CYCLES,
   MOCK_OBJECT_TYPES,
   MOCK_ROLE_LIFE_CYCLE_PERMISSIONS,
+  MOCK_ROLE_OBJECT_TYPE_PERMISSIONS,
+  MOCK_STATE_REQUIREMENTS,
   MOCK_USER_GROUPS,
 } from './mock/fixtures.ts';
 
@@ -51,5 +55,16 @@ export class MockResolverSource implements ResolverDataSource {
 
   async fetchRoleLifeCyclePermissions(roleId: number): Promise<ApiRoleLifeCyclePermission[]> {
     return clone(MOCK_ROLE_LIFE_CYCLE_PERMISSIONS[roleId] ?? []);
+  }
+
+  async fetchRoleObjectTypePermissions(
+    roleId: number,
+    objectTypeId: number,
+  ): Promise<ApiRolePermissionRow[]> {
+    return clone(MOCK_ROLE_OBJECT_TYPE_PERMISSIONS[`${roleId}:${objectTypeId}`] ?? []);
+  }
+
+  async fetchStateRequirements(objectTypeId: number): Promise<ApiStateRequiredResponse> {
+    return clone(MOCK_STATE_REQUIREMENTS[objectTypeId] ?? {});
   }
 }

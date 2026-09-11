@@ -16,6 +16,8 @@ import type {
   ApiObjectLifeCycle,
   ApiObjectType,
   ApiRoleLifeCyclePermission,
+  ApiRolePermissionRow,
+  ApiStateRequiredResponse,
   ApiUser,
   ApiUserGroup,
 } from '../src/server/types/resolver-api.ts';
@@ -162,6 +164,15 @@ function sourceOf(parts: {
     },
     async fetchObjectTypes(): Promise<ApiObjectType[]> {
       return parts.objectTypes;
+    },
+    // These cases exercise grant attribution, not reported permissions, so the
+    // permission endpoints answer empty -- the drill-down then falls back to
+    // the grant-derived view, which is what each case asserts on.
+    async fetchRoleObjectTypePermissions(): Promise<ApiRolePermissionRow[]> {
+      return [];
+    },
+    async fetchStateRequirements(): Promise<ApiStateRequiredResponse> {
+      return {};
     },
     async fetchRoleLifeCyclePermissions(roleId: number): Promise<ApiRoleLifeCyclePermission[]> {
       if (failRoleIds.has(roleId)) {
@@ -334,6 +345,87 @@ console.log('\nregression: catalog without states says so');
     caseMatrix.derivation.caveats[0],
   );
   check('meta flags it too', repo.meta().lifeCycleStatesAvailable === false);
+}
+
+console.log('\nreported per-state permissions');
+{
+  const repo = new MatrixRepository(new MockResolverSource(), 60_000, 6);
+  const detail = await repo.getObjectTypeDetail(449698, 450001);
+  const workflow = detail.lifeCycles.find((entry) => entry.lifeCycleId === 603174);
+  const triage = workflow?.states.find((state) => state.name === 'Triage');
+  const open = workflow?.states.find((state) => state.name === 'Open');
+
+  check('the grant still reports the state as covered', triage?.granted === true);
+  check(
+    'but the reported level overrides it with no access',
+    triage?.permission?.level === 'none',
+    triage?.permission,
+  );
+  check(
+    'read-write is reported where the API says so',
+    open?.permission?.level === 'read-write' && open.permission.rawLevel === 2,
+    open?.permission,
+  );
+  check(
+    'capabilities come through per state',
+    open?.permission?.capabilities.canCreate === true &&
+      open.permission.capabilities.canDelete === false,
+    open?.permission?.capabilities,
+  );
+  check('triggers come through per state', open?.permission?.triggerIds.length === 2,
+    open?.permission?.triggerIds);
+  check(
+    'exit requirements are counted by kind',
+    workflow?.states.find((state) => state.name === 'Investigation')?.requirements?.fieldCount ===
+      1 &&
+      workflow.states.find((state) => state.name === 'Investigation')?.requirements?.roleCount === 1,
+    workflow?.states.find((state) => state.name === 'Investigation')?.requirements,
+  );
+
+  const escalation = detail.lifeCycles.find((entry) => entry.lifeCycleId === 603272);
+  check(
+    'states with no reported row stay null, not "no access"',
+    escalation?.states.every((state) => state.permission === null) === true,
+  );
+  check(
+    'the summary separates no-access from unreported',
+    detail.permissionSummary.readWrite === 2 &&
+      detail.permissionSummary.read === 2 &&
+      detail.permissionSummary.none === 1 &&
+      detail.permissionSummary.unreported === 3 &&
+      detail.permissionSummary.reported === true,
+    detail.permissionSummary,
+  );
+  check('no error is reported when the endpoint answered', detail.permissionsError === null);
+}
+
+console.log('\nreported permissions absent or failing');
+{
+  const repo = new MatrixRepository(new MockResolverSource(), 60_000, 6);
+  // 449680 has no permission rows fixtured for Cyber Control.
+  const detail = await repo.getObjectTypeDetail(449680, 522608);
+  check('an empty response is not an error', detail.permissionsError === null);
+  check('nothing is reported', detail.permissionSummary.reported === false,
+    detail.permissionSummary);
+  check(
+    'the grant-derived view still renders',
+    detail.lifeCycles.length === 1 && detail.lifeCycles[0]?.granted === true,
+  );
+}
+
+console.log('\nthe drill-down degrades when permissions fail');
+{
+  const failing = new MockResolverSource();
+  // Override just the permissions call to fail, leaving everything else.
+  failing.fetchRoleObjectTypePermissions = async (): Promise<never> => {
+    throw new ResolverApiError('Upstream 500 for role permissions', 500, '/data/rolePermissions');
+  };
+  const repo = new MatrixRepository(failing, 60_000, 6);
+  const detail = await repo.getObjectTypeDetail(449698, 450001);
+  check('the drill-down still returns', detail.lifeCycles.length === 2);
+  check('and says why the levels are missing',
+    detail.permissionsError?.includes('500') === true, detail.permissionsError);
+  check('with nothing reported', detail.permissionSummary.reported === false);
 }
 
 console.log('\nregression: a duplicated object type id does not double-credit a grant');
