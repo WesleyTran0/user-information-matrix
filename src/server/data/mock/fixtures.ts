@@ -15,7 +15,7 @@ import type {
   ApiRoleLifeCyclePermission,
   ApiUser,
   ApiUserGroup,
-} from '../../../shared/types/resolver-api.ts';
+} from '../../types/resolver-api.ts';
 
 const ORG = 1000;
 const CREATED = '2019-12-17T03:25:41.218Z';

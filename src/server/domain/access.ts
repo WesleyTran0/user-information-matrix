@@ -49,6 +49,7 @@ export function buildDerivationNote(statesAvailable: boolean): DerivationNote {
     summary:
       'Access is granted per object lifecycle, not per state. Every state of a granted lifecycle is shown as reachable; states of a non-granted lifecycle on the same object type are not.',
     caveats: statesAvailable ? [...BASE_CAVEATS] : [NO_STATES_CAVEAT, ...BASE_CAVEATS],
+    statesAvailable,
   };
 }
 

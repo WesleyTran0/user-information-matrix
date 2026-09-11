@@ -5,7 +5,7 @@ import type {
   ApiObjectType,
   ApiUser,
   ApiUserGroup,
-} from '../../shared/types/resolver-api.ts';
+} from '../types/resolver-api.ts';
 import type {
   Catalog,
   LifeCycle,

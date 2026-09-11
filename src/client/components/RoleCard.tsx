@@ -2,6 +2,11 @@ import type { ObjectTypeId, RoleAccess, RoleId } from '../../shared/types/domain
 import { CoverageBadge } from './CoverageBadge.tsx';
 import { ObjectTypeDetail } from './ObjectTypeDetail.tsx';
 
+/** Upstream data reaching a style attribute is validated as a hex colour. */
+function safeColor(color: string | null): string | null {
+  return color !== null && /^#(?:[0-9a-f]{3}|[0-9a-f]{6})$/i.test(color) ? color : null;
+}
+
 export interface Selection {
   roleId: RoleId;
   objectTypeId: ObjectTypeId;
@@ -63,12 +68,15 @@ export function RoleCard({ entry, expanded, onToggle, selection, onSelect }: Rol
                   selection.roleId === role.id &&
                   selection.objectTypeId === objectType.objectTypeId;
 
+                const detailPanelId = `detail-${role.id}-${objectType.objectTypeId}`;
+
                 return (
                   <li key={objectType.objectTypeId}>
                     <button
                       type="button"
                       className={`object-type ${isSelected ? 'object-type--selected' : ''}`}
                       aria-expanded={isSelected}
+                      aria-controls={detailPanelId}
                       onClick={() =>
                         onSelect(
                           isSelected
@@ -79,7 +87,9 @@ export function RoleCard({ entry, expanded, onToggle, selection, onSelect }: Rol
                     >
                       <span
                         className="monogram"
-                        style={objectType.color !== null ? { background: objectType.color } : {}}
+                        style={safeColor(objectType.color) !== null
+                          ? { background: safeColor(objectType.color) as string }
+                          : {}}
                         aria-hidden="true"
                       >
                         {objectType.monogram ?? objectType.name.slice(0, 2).toUpperCase()}
@@ -98,6 +108,7 @@ export function RoleCard({ entry, expanded, onToggle, selection, onSelect }: Rol
                       <ObjectTypeDetail
                         roleId={role.id}
                         objectTypeId={objectType.objectTypeId}
+                        panelId={detailPanelId}
                       />
                     )}
                   </li>

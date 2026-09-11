@@ -1,4 +1,4 @@
-import type { ApiEnvelope } from '../../shared/types/resolver-api.ts';
+import type { ApiEnvelope } from '../types/resolver-api.ts';
 import type { ServerConfig } from '../env.ts';
 
 /** Error carrying enough context for the route layer to answer honestly. */

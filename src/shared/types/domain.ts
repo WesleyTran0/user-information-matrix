@@ -167,6 +167,13 @@ export interface DerivationNote {
   method: 'lifecycle-grant-implies-all-states';
   summary: string;
   caveats: string[];
+  /**
+   * False when the catalog carried no lifecycle states, which makes every
+   * "0/0 states" on screen meaningless. A structured field rather than a
+   * caveat string, so the UI can raise it unconditionally instead of leaving
+   * it behind a disclosure toggle.
+   */
+  statesAvailable: boolean;
 }
 
 /* -------------------------------------------------------------------------- */

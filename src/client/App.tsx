@@ -15,11 +15,13 @@ export function App() {
   const [roleFilter, setRoleFilter] = useState('');
 
   const groups = useAsync((signal) => api.groups(signal), []);
-  const meta = useAsync((signal) => api.meta(signal), [selectedGroupId]);
   const matrix = useAsync(
     selectedGroupId === null ? null : (signal) => api.groupMatrix(selectedGroupId, signal),
     [selectedGroupId],
   );
+  // Refetched once the matrix settles: read before that, /api/meta reports the
+  // state from before this group was loaded (and a null catalog on first paint).
+  const meta = useAsync((signal) => api.meta(signal), [selectedGroupId, matrix.status]);
 
   const handleSelectGroup = (groupId: GroupId): void => {
     setSelectedGroupId(groupId);
@@ -29,17 +31,21 @@ export function App() {
   };
 
   const toggleRole = (roleId: RoleId): void => {
+    // State updaters must stay pure -- React may replay them -- so the
+    // dependent update is issued alongside, not from inside, the updater.
+    const isExpanded = expandedRoleIds.has(roleId);
+
     setExpandedRoleIds((current) => {
       const next = new Set(current);
-      if (next.has(roleId)) {
-        next.delete(roleId);
-        // Collapsing a role should not leave its drill-down "open" underneath.
-        setSelection((active) => (active?.roleId === roleId ? null : active));
-      } else {
-        next.add(roleId);
-      }
+      if (isExpanded) next.delete(roleId);
+      else next.add(roleId);
       return next;
     });
+
+    // Collapsing a role should not leave its drill-down "open" underneath.
+    if (isExpanded) {
+      setSelection((active) => (active?.roleId === roleId ? null : active));
+    }
   };
 
   const value = matrix.value;
@@ -71,9 +77,6 @@ export function App() {
             </span>
             {meta.value.upstreamCallCount} upstream {meta.value.upstreamCallCount === 1 ? 'call' : 'calls'} ·{' '}
             {meta.value.cachedRolePermissionCount} roles cached
-            {meta.value.lifeCycleStatesAvailable === false && (
-              <span className="chip chip--warn">no lifecycle states</span>
-            )}
           </p>
         )}
       </header>

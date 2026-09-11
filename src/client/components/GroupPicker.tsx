@@ -29,6 +29,9 @@ export function GroupPicker({ groups, selectedGroupId, onSelect, disabled }: Gro
           </option>
         ))}
       </select>
+      {groups.length === 0 && (
+        <span className="muted">No user groups were returned for this API key.</span>
+      )}
     </label>
   );
 }

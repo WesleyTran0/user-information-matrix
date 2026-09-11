@@ -13,6 +13,8 @@ import { App } from '../src/client/App.tsx';
 import { RoleCard } from '../src/client/components/RoleCard.tsx';
 import { UserList } from '../src/client/components/UserList.tsx';
 import { DerivationNotice } from '../src/client/components/DerivationNotice.tsx';
+import { ObjectTypeDetailView } from '../src/client/components/ObjectTypeDetail.tsx';
+import { buildDerivationNote } from '../src/server/domain/access.ts';
 import { MatrixRepository } from '../src/server/data/repository.ts';
 import { MockResolverSource } from '../src/server/data/mockSource.ts';
 import type { RoleAccess } from '../src/shared/types/domain.ts';
@@ -62,7 +64,10 @@ expect(
 expect('partial coverage is badged', card.includes('badge--partial'));
 expect('full coverage is badged', card.includes('badge--full'));
 expect('granted/total state counts render', card.includes('5/8 states'));
-expect('monogram swatch uses the object type colour', card.includes('INC'));
+expect(
+  'monogram swatch uses the object type colour',
+  card.includes('INC') && card.includes('background:#d4574a'),
+);
 expect('the drilled-down row is marked selected', card.includes('object-type--selected'));
 
 const riskChampion = requireRole(matrix.roles, 449680);
@@ -90,6 +95,43 @@ expect(
 
 const note = text(renderToString(<DerivationNotice note={matrix.derivation} />));
 expect('the derivation is labelled on screen', note.includes('Derived'));
+
+// The drill-down is the surface the product exists to show. renderToString
+// never runs effects, so the fetching wrapper would render only a spinner --
+// the presentational view is rendered directly against a real payload.
+const detail = await repository.getObjectTypeDetail(449698, 450001);
+const detailHtml = text(renderToString(<ObjectTypeDetailView detail={detail} />));
+expect('granted lifecycle is badged Granted', detailHtml.includes('Granted'));
+expect('non-granted lifecycle is badged Not granted', detailHtml.includes('Not granted'));
+expect('the per-state track renders', detailHtml.includes('state-track'));
+expect(
+  'reachable states are marked reachable',
+  detailHtml.includes('state--granted') && detailHtml.includes('Reachable by this role'),
+);
+expect(
+  'unreachable states are marked, not hidden',
+  detailHtml.includes('state--denied') && detailHtml.includes('Not reachable by this role'),
+);
+expect(
+  'every state of both lifecycles is present',
+  ['Triage', 'Open', 'Investigation', 'Review', 'Closed', 'Raised', 'Escalated', 'Resolved'].every(
+    (state) => detailHtml.includes(state),
+  ),
+);
+expect('the lifecycle/state tally renders', detailHtml.includes('5 of 8 states reachable'));
+
+// A catalog with no states must warn without the user opening anything.
+const degraded = text(renderToString(<DerivationNotice note={buildDerivationNote(false)} />));
+expect(
+  'a stateless catalog warns unconditionally, not behind the toggle',
+  degraded.includes('no lifecycle states') && degraded.includes('warning'),
+);
+expect(
+  'a healthy catalog does not show that warning',
+  !text(renderToString(<DerivationNotice note={buildDerivationNote(true)} />)).includes(
+    'no lifecycle states',
+  ),
+);
 
 console.log(`\n${failures === 0 ? 'PASS' : `FAIL (${failures})`}`);
 process.exit(failures === 0 ? 0 : 1);

@@ -47,8 +47,12 @@ export function useAsync<TValue>(
       active = false;
       controller.abort();
     };
-    // `load` is rebuilt every render by design; `deps` is the real trigger.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // `load` is rebuilt every render by design, so `deps` is the real trigger.
+    //
+    // CONTRACT, currently enforced by review rather than by a linter (no eslint
+    // in this project yet): `deps` must list every value `load` closes over,
+    // including whatever decides it is null. Miss one and the effect keeps
+    // showing the previous result. Call sites are audited in check:render.
   }, deps);
 
   return state;

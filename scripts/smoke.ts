@@ -9,6 +9,7 @@
 import { MatrixRepository } from '../src/server/data/repository.ts';
 import { MockResolverSource } from '../src/server/data/mockSource.ts';
 import type { ResolverDataSource } from '../src/server/data/source.ts';
+import { ResolverApiError } from '../src/server/http/resolverClient.ts';
 import type {
   ApiGroupRole,
   ApiKeyedByGroupId,
@@ -17,7 +18,7 @@ import type {
   ApiRoleLifeCyclePermission,
   ApiUser,
   ApiUserGroup,
-} from '../src/shared/types/resolver-api.ts';
+} from '../src/server/types/resolver-api.ts';
 
 let failures = 0;
 
@@ -163,7 +164,15 @@ function sourceOf(parts: {
       return parts.objectTypes;
     },
     async fetchRoleLifeCyclePermissions(roleId: number): Promise<ApiRoleLifeCyclePermission[]> {
-      if (failRoleIds.has(roleId)) throw new Error(`upstream 403 for role ${roleId}`);
+      if (failRoleIds.has(roleId)) {
+        // The real client throws this type; using it keeps the status mapping
+        // in apiErrorHandler on the tested path.
+        throw new ResolverApiError(
+          `Upstream 403 for /data/rolePermissions/objectLifeCycles/role/${roleId}`,
+          403,
+          `/data/rolePermissions/objectLifeCycles/role/${roleId}`,
+        );
+      }
       return parts.grants[roleId] ?? [];
     },
   };
@@ -325,6 +334,37 @@ console.log('\nregression: catalog without states says so');
     caseMatrix.derivation.caveats[0],
   );
   check('meta flags it too', repo.meta().lifeCycleStatesAvailable === false);
+}
+
+console.log('\nregression: a duplicated object type id does not double-credit a grant');
+{
+  const duplicated = buildObjectType(50, 900);
+  const repo = new MatrixRepository(
+    sourceOf({
+      objectTypes: [duplicated, { ...duplicated }],
+      lifeCycles: [buildLifeCycle(900, 50, 4)],
+      grants: { 900: [{ objectLifeCycleId: 900 }] },
+    }),
+    60_000,
+    6,
+  );
+  const caseMatrix = await repo.getGroupMatrix(1);
+  const row = caseMatrix.roles[0]?.objectTypes[0];
+  check('the object type appears once', caseMatrix.roles[0]?.objectTypes.length === 1);
+  check(
+    'granted never exceeds total',
+    row !== undefined &&
+      row.grantedLifeCycleCount <= row.totalLifeCycleCount &&
+      row.grantedStateCount <= row.totalStateCount,
+    row,
+  );
+  const drill = await repo.getObjectTypeDetail(900, 50);
+  check(
+    'summary and drill-down still agree',
+    row?.grantedLifeCycleCount === drill.grantedLifeCycleCount &&
+      row?.grantedStateCount === drill.grantedStateCount,
+    { summary: row, detail: { lc: drill.grantedLifeCycleCount, st: drill.grantedStateCount } },
+  );
 }
 
 console.log('\nregression: unknown role ids are rejected, not fetched');

@@ -6,7 +6,7 @@ import type {
   ApiRoleLifeCyclePermission,
   ApiUser,
   ApiUserGroup,
-} from '../../shared/types/resolver-api.ts';
+} from '../types/resolver-api.ts';
 
 /**
  * Everything the app needs from upstream, expressed as raw payloads.

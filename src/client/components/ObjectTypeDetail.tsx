@@ -1,6 +1,11 @@
 import { api } from '../api/client.ts';
 import { useAsync } from '../hooks/useAsync.ts';
-import type { LifeCycleAccess, ObjectTypeId, RoleId } from '../../shared/types/domain.ts';
+import type {
+  LifeCycleAccess,
+  ObjectTypeAccessDetail,
+  ObjectTypeId,
+  RoleId,
+} from '../../shared/types/domain.ts';
 import { CoverageBadge } from './CoverageBadge.tsx';
 import { Message } from './Message.tsx';
 
@@ -37,47 +42,74 @@ function LifeCycleRow({ lifeCycle }: { lifeCycle: LifeCycleAccess }) {
   );
 }
 
-interface ObjectTypeDetailProps {
-  roleId: RoleId;
-  objectTypeId: ObjectTypeId;
-}
-
 /**
- * Drill-down for one object type under one role. Costs no upstream API call:
- * the server answers it from the catalog and the role's cached grants.
+ * Presentational half of the drill-down, split out so it can be rendered
+ * against a payload in `npm run check:render`. `renderToString` never runs
+ * effects, so anything behind the fetching wrapper below is invisible to that
+ * check -- and this is the surface the whole product exists to show.
  */
-export function ObjectTypeDetail({ roleId, objectTypeId }: ObjectTypeDetailProps) {
-  const detail = useAsync(
-    (signal) => api.objectTypeDetail(roleId, objectTypeId, signal),
-    [roleId, objectTypeId],
-  );
-
-  if (detail.status === 'loading' || detail.status === 'idle') {
-    return <Message tone="info" title="Loading permissions…" />;
-  }
-  if (detail.status === 'error' || detail.value === null) {
-    return <Message tone="error" title="Could not load permissions" detail={detail.error ?? ''} />;
-  }
-
-  const value = detail.value;
-
+export function ObjectTypeDetailView({ detail }: { detail: ObjectTypeAccessDetail }) {
   return (
     <div className="detail">
       <div className="detail__head">
-        <h4 className="detail__title">{value.name}</h4>
-        <CoverageBadge coverage={value.coverage} />
+        <h4 className="detail__title">{detail.name}</h4>
+        <CoverageBadge coverage={detail.coverage} />
         <span className="muted">
-          {value.grantedLifeCycleCount} of {value.totalLifeCycleCount}{' '}
-          {value.totalLifeCycleCount === 1 ? 'lifecycle' : 'lifecycles'} · {value.grantedStateCount}{' '}
-          of {value.totalStateCount} states reachable
+          {detail.grantedLifeCycleCount} of {detail.totalLifeCycleCount}{' '}
+          {detail.totalLifeCycleCount === 1 ? 'lifecycle' : 'lifecycles'} ·{' '}
+          {detail.grantedStateCount} of {detail.totalStateCount} states reachable
         </span>
       </div>
-      {value.description !== null && <p className="detail__description">{value.description}</p>}
+      {detail.description !== null && <p className="detail__description">{detail.description}</p>}
       <ul className="lifecycle-list">
-        {value.lifeCycles.map((lifeCycle) => (
+        {detail.lifeCycles.map((lifeCycle) => (
           <LifeCycleRow key={lifeCycle.lifeCycleId} lifeCycle={lifeCycle} />
         ))}
       </ul>
+    </div>
+  );
+}
+
+/**
+ * Detail responses are pure functions of the catalog and the role's cached
+ * grants, and cost no upstream call, but re-requesting one on every expand and
+ * collapse still means a round trip and a loading flash over unchanged data.
+ * Memoised for the life of the page; the server's TTL governs real staleness.
+ */
+const detailCache = new Map<string, ObjectTypeAccessDetail>();
+
+interface ObjectTypeDetailProps {
+  roleId: RoleId;
+  objectTypeId: ObjectTypeId;
+  panelId: string;
+}
+
+export function ObjectTypeDetail({ roleId, objectTypeId, panelId }: ObjectTypeDetailProps) {
+  const key = `${roleId}:${objectTypeId}`;
+  const cached = detailCache.get(key);
+
+  const request = useAsync(
+    cached !== undefined
+      ? null
+      : async (signal) => {
+          const detail = await api.objectTypeDetail(roleId, objectTypeId, signal);
+          detailCache.set(key, detail);
+          return detail;
+        },
+    [key],
+  );
+
+  const detail = cached ?? request.value;
+
+  return (
+    <div id={panelId}>
+      {detail !== null && detail !== undefined ? (
+        <ObjectTypeDetailView detail={detail} />
+      ) : request.status === 'error' ? (
+        <Message tone="error" title="Could not load permissions" detail={request.error ?? ''} />
+      ) : (
+        <Message tone="info" title="Loading permissions…" />
+      )}
     </div>
   );
 }

@@ -13,9 +13,10 @@
     "build": "vite build",
     "start": "NODE_ENV=production node --env-file-if-exists=.env src/server/index.ts",
     "typecheck": "tsc -b tsconfig.json",
-    "check": "npm run typecheck && npm run check:data && npm run check:render",
+    "check": "npm run typecheck && npm run check:data && npm run check:render && npm run check:live-path",
     "check:data": "node scripts/smoke.ts",
-    "check:render": "vite build --config vite.render-check.config.ts && node node_modules/.tmp/render/render-check.js"
+    "check:render": "vite build --config vite.render-check.config.ts && node node_modules/.tmp/render/render-check.js",
+    "check:live-path": "node scripts/live-path-check.ts"
   },
   "dependencies": {
     "express": "^4.21.2",

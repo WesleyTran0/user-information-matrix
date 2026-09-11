@@ -6,7 +6,7 @@ import type {
   ApiRoleLifeCyclePermission,
   ApiUser,
   ApiUserGroup,
-} from '../../shared/types/resolver-api.ts';
+} from '../types/resolver-api.ts';
 import type { ResolverDataSource } from './source.ts';
 import {
   MOCK_GROUP_ROLES,

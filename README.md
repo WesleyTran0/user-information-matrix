@@ -57,19 +57,26 @@ static bundle).
 ## Checks
 
 ```bash
-npm run check         # all three of the below
-npm run typecheck     # tsc -b: client, server and scripts projects
-npm run check:data    # data-layer assertions against the fixtures
-npm run check:render  # renders the real components with real derived data
+npm run check          # all four of the below
+npm run typecheck      # tsc -b: client, server and scripts projects
+npm run check:data     # 36 data-layer assertions against the fixtures
+npm run check:render   # 21 assertions rendering the real components
+npm run check:live-path # 9 assertions: real server vs. a fake Resolver upstream
 ```
 
-`check:data` needs no dependencies at all -- `node scripts/smoke.ts` runs it
-directly, since Node strips the types natively.
+`check:data` and `check:live-path` need no dependencies at all -- Node strips
+the types natively, so `node scripts/smoke.ts` runs them directly.
+`check:live-path` stands up a fake Resolver upstream and boots the real server
+against it with `DATA_SOURCE=live`, which is the only way to cover the
+`x-api-key` header, envelope unwrapping, the measured call budget and upstream
+error mapping.
 
 ## Layout
 
 ```
-src/shared/types/   resolver-api.ts (wire DTOs) + domain.ts (normalized + derived)
+src/shared/types/   domain.ts -- the normalized + derived model, the only
+                    thing the client is allowed to see
+src/server/types/   resolver-api.ts -- raw wire DTOs, server-side by design
 src/server/http/    API client, TTL+single-flight cache, bounded concurrency
 src/server/data/    ResolverDataSource (live | mock), repository = call budget owner
 src/server/domain/  normalize -> catalog index -> access derivation
@@ -77,5 +84,12 @@ src/server/routes/  HTTP surface and the error contract
 src/client/         React UI: group picker, role cards, object-type drill-down
 ```
 
-Wire types stop at `src/server/domain/normalize.ts`; nothing downstream reads
-raw API shapes.
+The wire/domain boundary is structural, not a convention: the raw DTOs live
+under `src/server/`, so the client program cannot import them even by path.
+
+## Error contract
+
+Every `/api` failure returns `{ error: { message, status, upstream? } }`,
+including unmatched routes -- in production the SPA catch-all never swallows an
+`/api` 404. A role whose permissions fail to load does not fail the group: it
+comes back with `grantsError` set and the rest of the group renders.

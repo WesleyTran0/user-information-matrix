@@ -48,7 +48,10 @@ export function buildCatalogIndex(catalog: Catalog): CatalogIndex {
   const objectTypeIdsByLifeCycle = new Map<LifeCycleId, ObjectTypeId[]>();
   const totalStatesByObjectType = new Map<ObjectTypeId, number>();
 
-  for (const objectType of catalog.objectTypes) {
+  // Iterate the de-duplicated map, not the raw array: a repeated object type id
+  // upstream would otherwise append its id twice and credit a grant twice,
+  // producing counts like "2/1 lifecycles".
+  for (const objectType of objectTypeById.values()) {
     let total = 0;
     for (const lifeCycleId of objectType.lifeCycleIds) {
       total += lifeCycleById.get(lifeCycleId)?.states.length ?? 0;
