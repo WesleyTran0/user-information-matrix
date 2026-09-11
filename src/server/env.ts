@@ -11,13 +11,15 @@ export interface ServerConfig {
   isProduction: boolean;
 }
 
-function readInt(name: string, fallback: number): number {
+function readInt(name: string, fallback: number, min = 1): number {
   const raw = process.env[name];
   if (raw === undefined || raw.trim() === '') return fallback;
   // parseInt would accept "8787abc"; require the whole value to be digits.
   const parsed = /^\d+$/.test(raw.trim()) ? Number.parseInt(raw.trim(), 10) : Number.NaN;
-  if (!Number.isFinite(parsed) || parsed <= 0) {
-    throw new Error(`${name} must be a positive integer, received "${raw}"`);
+  if (!Number.isFinite(parsed) || parsed < min) {
+    throw new Error(
+      `${name} must be an integer >= ${min}, received "${raw}"`,
+    );
   }
   return parsed;
 }
@@ -51,7 +53,9 @@ export function loadConfig(): ServerConfig {
     // Trailing slash removed so path joining stays a plain concatenation.
     baseUrl: baseUrl === null ? null : baseUrl.replace(/\/+$/, ''),
     apiKey,
-    port: readInt('PORT', 8787),
+    // 0 is allowed and means "let the OS pick a free port"; the bound port
+    // is reported on startup. Used by scripts/live-path-check.ts.
+    port: readInt('PORT', 8787, 0),
     timeoutMs: readInt('RESOLVER_TIMEOUT_MS', 30_000),
     maxConcurrency: readInt('RESOLVER_MAX_CONCURRENCY', 6),
     cacheTtlMs: readInt('CACHE_TTL_MS', 300_000),

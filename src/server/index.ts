@@ -45,8 +45,11 @@ function main(): void {
   app.use(apiErrorHandler);
 
   const server = app.listen(config.port, () => {
+    // PORT=0 asks the OS for a free port, so report what was actually bound.
+    const address = server.address();
+    const boundPort = typeof address === 'object' && address !== null ? address.port : config.port;
     console.log(
-      `[server] listening on http://localhost:${config.port} (data source: ${config.dataSource})`,
+      `[server] listening on http://localhost:${boundPort} (data source: ${config.dataSource})`,
     );
     if (!config.isProduction) {
       console.log('[server] run `npm run dev:client` for the UI on http://localhost:5173');

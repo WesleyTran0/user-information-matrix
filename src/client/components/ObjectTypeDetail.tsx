@@ -74,7 +74,11 @@ export function ObjectTypeDetailView({ detail }: { detail: ObjectTypeAccessDetai
  * Detail responses are pure functions of the catalog and the role's cached
  * grants, and cost no upstream call, but re-requesting one on every expand and
  * collapse still means a round trip and a loading flash over unchanged data.
- * Memoised for the life of the page; the server's TTL governs real staleness.
+ *
+ * Scope of the memo: entries live for the lifetime of the page and are never
+ * evicted (bounded by roles x object types). The client does not re-ask, so
+ * this copy outlives the server's cache TTL and ignores a server-side cache
+ * clear -- reload the page to pick up a changed catalog.
  */
 const detailCache = new Map<string, ObjectTypeAccessDetail>();
 
@@ -96,6 +100,10 @@ export function ObjectTypeDetail({ roleId, objectTypeId, panelId }: ObjectTypeDe
           detailCache.set(key, detail);
           return detail;
         },
+    // `cached` also decides whether `load` is null, but it is deliberately not
+    // in deps: it only ever transitions undefined -> defined for a given key,
+    // and re-running the effect at that moment would refetch what was just
+    // stored. `key` changing is the only transition that must refetch.
     [key],
   );
 

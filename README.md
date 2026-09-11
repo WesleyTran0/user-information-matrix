@@ -61,7 +61,7 @@ npm run check          # all four of the below
 npm run typecheck      # tsc -b: client, server and scripts projects
 npm run check:data     # 36 data-layer assertions against the fixtures
 npm run check:render   # 21 assertions rendering the real components
-npm run check:live-path # 9 assertions: real server vs. a fake Resolver upstream
+npm run check:live-path # 15 assertions: real server vs. a fake Resolver upstream
 ```
 
 `check:data` and `check:live-path` need no dependencies at all -- Node strips
