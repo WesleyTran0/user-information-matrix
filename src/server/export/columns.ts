@@ -19,25 +19,27 @@
  *     numerically rather than as text.
  *
  * Obvious columns not built yet, each a one-liner here when wanted:
- *   - `Grant Understates` -- the mirror of `Grant Overstates`: the grant is
- *     absent yet the API reports read or write. No fixture exercises it today,
- *     so it is left out rather than shipped untested.
  *   - `Form Id` from `state.permission.formId`.
  *   - user columns (`GroupMatrix.users`), which would require the row tuple to
  *     gain a `user` member and multiply row counts by group membership.
  */
+import type { StateRequirements } from '../../shared/types/domain.ts';
 import type { ExportColumn, MatrixExportRow } from './types.ts';
 
 /**
- * The three outcomes below must never collapse into one cell value. They mean
- * different things and an auditor acting on the sheet needs to tell them apart:
+ * The four negative-ish outcomes below must never collapse into one cell value.
+ * They mean different things and an auditor acting on the sheet needs to tell
+ * them apart:
  *
  *   'No access'                -- the API reported a row, and it says level 0.
  *   'Not reported'             -- the call succeeded but returned no row for
  *                                 this state. Resolver simply has nothing here.
  *   'Permissions unavailable'  -- the call failed. We do not know anything.
+ *   'Unknown level (raw N)'    -- the API reported a level outside the known
+ *                                 0/1/2 encoding. Neither "no access" nor
+ *                                 "not reported": it is a fact we cannot read.
  *
- * Writing an empty cell for all three would read as "no access everywhere",
+ * Writing an empty cell for all four would read as "no access everywhere",
  * which is the single most dangerous mistake this export could make.
  */
 function reportedAccess(row: MatrixExportRow): string | null {
@@ -57,9 +59,9 @@ function reportedAccess(row: MatrixExportRow): string | null {
     case 'none':
       return 'No access';
     default:
-      // An unrecognised level is not "no access"; show the raw value so an
-      // upstream change is visible instead of being rounded down to zero.
-      return `Unknown (raw ${permission.rawLevel})`;
+      // Carry the raw value inline as well as in `Reported Level`, so the cell
+      // is self-explanatory when the sheet is filtered down to one column.
+      return `Unknown level (raw ${permission.rawLevel})`;
   }
 }
 
@@ -75,6 +77,38 @@ function grantOverstates(row: MatrixExportRow): boolean | null {
   const permission = row.state?.permission;
   if (permission == null) return null;
   return row.grantCoversState && permission.level === 'none';
+}
+
+/**
+ * The mirror of `grantOverstates`: the lifecycle grant does not cover the state
+ * yet the API reports access in it. The app treats the grant as an upper bound
+ * on access, so a TRUE here is that assumption being violated.
+ *
+ * The predicate deliberately matches `PermissionSummary.understatedStates`
+ * exactly -- including treating an unrecognised level as access rather than as
+ * nothing -- so a per-state filter and the object-type roll-up always agree.
+ */
+function grantUnderstates(row: MatrixExportRow): boolean | null {
+  const permission = row.state?.permission;
+  if (permission == null) return null;
+  return !row.grantCoversState && permission.level !== 'none';
+}
+
+/**
+ * Exit requirements, with a failed call kept distinct from "nothing required".
+ *
+ * A number always means the endpoint answered: 0 is a reported zero, not a
+ * blank. `'unknown'` means the call failed, which without this would be
+ * indistinguishable from a state that genuinely requires nothing.
+ */
+function requirementCell(
+  row: MatrixExportRow,
+  pick: (requirements: StateRequirements) => number,
+): string | number | null {
+  if (row.state === null || row.objectType === null) return null;
+  if (row.objectType.requirementsError !== null) return 'unknown';
+  const requirements = row.state.requirements;
+  return requirements === null ? 0 : pick(requirements);
 }
 
 export const MATRIX_COLUMNS: readonly ExportColumn[] = [
@@ -170,25 +204,26 @@ export const MATRIX_COLUMNS: readonly ExportColumn[] = [
     value: (row) => row.grantCoversState,
   },
   { header: 'Grant Overstates', key: 'grantOverstates', width: 17, value: grantOverstates },
+  { header: 'Grant Understates', key: 'grantUnderstates', width: 18, value: grantUnderstates },
 
   /* state requirements ------------------------------------------------------ */
   {
     header: 'Requires Fields',
     key: 'requiresFields',
     width: 15,
-    value: (row) => row.state?.requirements?.fieldCount ?? null,
+    value: (row) => requirementCell(row, (requirements) => requirements.fieldCount),
   },
   {
     header: 'Requires Roles',
     key: 'requiresRoles',
     width: 14,
-    value: (row) => row.state?.requirements?.roleCount ?? null,
+    value: (row) => requirementCell(row, (requirements) => requirements.roleCount),
   },
   {
     header: 'Requires Other',
     key: 'requiresOther',
     width: 14,
-    value: (row) => row.state?.requirements?.otherCount ?? null,
+    value: (row) => requirementCell(row, (requirements) => requirements.otherCount),
   },
 
   /* object-type roll-ups ---------------------------------------------------- */
@@ -218,12 +253,66 @@ export const MATRIX_COLUMNS: readonly ExportColumn[] = [
     value: (row) => row.objectType?.totalStateCount ?? null,
   },
 
+  /* per-object-type data-quality roll-ups ----------------------------------- */
+  // These repeat down every row of a (role, object type) block, exactly like
+  // the coverage counts above. That is what lets a pivot at object-type
+  // granularity find the problem blocks without scanning states.
+  {
+    header: 'Overstated States',
+    key: 'overstatedStates',
+    width: 17,
+    value: (row) => row.objectType?.permissionSummary.overstatedStates ?? null,
+  },
+  {
+    header: 'Understated States',
+    key: 'understatedStates',
+    width: 18,
+    value: (row) => row.objectType?.permissionSummary.understatedStates ?? null,
+  },
+  {
+    header: 'Unknown Level States',
+    key: 'unknownLevelStates',
+    width: 20,
+    value: (row) => row.objectType?.permissionSummary.unknown ?? null,
+  },
+  {
+    // Non-zero means the endpoint reported access this sheet could not place
+    // against any state, so the rows below understate the truth. It has to be
+    // visible or the export quietly loses reported access.
+    header: 'Unmatched Reported Rows',
+    key: 'unmatchedReportedRows',
+    width: 23,
+    value: (row) => row.objectType?.permissionSummary.unmatchedReportedRows ?? null,
+  },
+  {
+    header: 'Unmatched Lifecycle Ids',
+    key: 'unmatchedLifeCycleIds',
+    width: 24,
+    value: (row) => {
+      const ids = row.objectType?.permissionSummary.unmatchedLifeCycleIds;
+      if (ids === undefined) return null;
+      return ids.length === 0 ? '' : ids.join(', ');
+    },
+  },
+  {
+    header: 'Duplicate Reported Rows',
+    key: 'duplicateReportedRows',
+    width: 23,
+    value: (row) => row.objectType?.permissionSummary.duplicateReportedRows ?? null,
+  },
+
   /* provenance -------------------------------------------------------------- */
   {
     header: 'Permissions Error',
     key: 'permissionsError',
     width: 40,
     value: (row) => row.objectType?.permissionsError ?? null,
+  },
+  {
+    header: 'Requirements Error',
+    key: 'requirementsError',
+    width: 40,
+    value: (row) => row.objectType?.requirementsError ?? null,
   },
   { header: 'Note', key: 'note', width: 52, value: (row) => row.note },
 ];

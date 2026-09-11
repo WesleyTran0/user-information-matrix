@@ -28,6 +28,7 @@ import {
   writeWorkbookFile,
 } from '../src/server/export/index.ts';
 import type { ExportColumn } from '../src/server/export/index.ts';
+import type { ApiRolePermissionRow } from '../src/server/types/resolver-api.ts';
 
 let failures = 0;
 
@@ -371,6 +372,46 @@ check(
     roles: countWhere(records, 'Requires Roles', 1),
   },
 );
+check(
+  'a state with nothing required reads 0, not blank -- the call did answer',
+  countWhere(records, 'Requires Fields', 0) === 25 &&
+    stateRows(records).every((record) => record['Requires Fields'] !== null),
+  countWhere(records, 'Requires Fields', 0),
+);
+
+console.log('\nexport: per-object-type data-quality roll-ups');
+
+check(
+  'the overstated roll-up marks all 8 rows of the offending block',
+  countWhere(records, 'Overstated States', 1) === 8,
+  countWhere(records, 'Overstated States', 1),
+);
+check(
+  'and reads 0, not blank, on the state rows of clean blocks',
+  countWhere(records, 'Overstated States', 0) === 23,
+  countWhere(records, 'Overstated States', 0),
+);
+check(
+  'nothing was reported that could not be placed against a state',
+  stateRows(records).every(
+    (record) =>
+      record['Unmatched Reported Rows'] === 0 &&
+      record['Duplicate Reported Rows'] === 0 &&
+      // exceljs may store an empty string as an empty cell; either is "none".
+      (record['Unmatched Lifecycle Ids'] === null ||
+        record['Unmatched Lifecycle Ids'] === ''),
+  ),
+  stateRows(records).find((record) => record['Unmatched Reported Rows'] !== 0),
+);
+check(
+  'the clean run reports no understated or unknown-level states',
+  countWhere(records, 'Grant Understates', true) === 0 &&
+    stateRows(records).every((record) => record['Unknown Level States'] === 0),
+);
+check(
+  'and no requirements call failed',
+  records.every((record) => record['Requirements Error'] === null),
+);
 
 /* -------------------------------------------------------------------------- */
 /* 5. Data gaps are rows, not silence                                         */
@@ -455,6 +496,199 @@ console.log('\nexport: the three negative outcomes never collapse');
     degradedRecords
       .filter((record) => record['Reported Access'] === 'Permissions unavailable')
       .every((record) => record['Grant Overstates'] === null),
+  );
+}
+
+/* -------------------------------------------------------------------------- */
+/* 6b. Grant Understates, and an access level we cannot read                  */
+/* -------------------------------------------------------------------------- */
+
+console.log('\nexport: the grant is wrong in the other direction too');
+
+/** Serves the fixtures plus extra permission rows for chosen pairs. */
+function sourceWithExtraRows(extra: Record<string, ApiRolePermissionRow[]>): MockResolverSource {
+  const patched = new MockResolverSource();
+  const inner = patched.fetchRoleObjectTypePermissions.bind(patched);
+  patched.fetchRoleObjectTypePermissions = async (roleId: number, objectTypeId: number) => {
+    const rows = await inner(roleId, objectTypeId);
+    return [...rows, ...(extra[`${roleId}:${objectTypeId}`] ?? [])];
+  };
+  return patched;
+}
+
+function extraRow(
+  roleId: number,
+  objectTypeId: number,
+  lifeCycleId: number,
+  ordinal: number,
+  permission: number,
+): ApiRolePermissionRow {
+  const objectLifeCycleStateId = lifeCycleId * 100 + ordinal;
+  return {
+    id: 99_000_000 + objectLifeCycleStateId,
+    permission,
+    canBulkLaunch: false,
+    canCreate: false,
+    canDelete: false,
+    canMerge: false,
+    canManageRole: false,
+    roleId,
+    objectTypeId,
+    objectLifeCycleId: lifeCycleId,
+    objectLifeCycleStateId,
+    formId: null,
+    org: 1000,
+    externalRefId: `probe-${roleId}-${objectLifeCycleStateId}`,
+    assigned: false,
+  };
+}
+
+{
+  // Risk Champion holds 603272 on Incident but NOT 603174. Reporting read-write
+  // on a 603174 state is the grant understating access. Separately, a level of
+  // 7 on a granted state is a value the encoding does not cover.
+  const anomalous = sourceWithExtraRows({
+    '449680:450001': [extraRow(449680, 450001, 603174, 0, 2)],
+    '449698:450001': [extraRow(449698, 450001, 603174, 9, 7)],
+  });
+  const anomalousRepo = new MatrixRepository(anomalous, 60_000, 6);
+  const anomalousExport = await exportGroupWorkbook(anomalousRepo, GROUP_ID, {
+    maxConcurrency: 6,
+  });
+  const anomalousSheet = await roundTrip(
+    anomalousExport.workbook,
+    `${OUT_DIR}/anomalous.xlsx`,
+    GROUP_NAME,
+  );
+  const anomalousRecords = recordsOf(anomalousSheet);
+
+  const understating = anomalousRecords.filter((record) => record['Grant Understates'] === true);
+  check('exactly one row understates', understating.length === 1, understating.length);
+  check(
+    'it is Risk Champion on a lifecycle it was never granted',
+    understating[0]?.['Role'] === 'Risk Champion' &&
+      understating[0]['Lifecycle'] === 'Incident Workflow' &&
+      understating[0]['Grant Covers State'] === false &&
+      understating[0]['Reported Access'] === 'Read & write',
+    understating[0],
+  );
+  check(
+    'the two directions are mutually exclusive on that row',
+    understating[0]?.['Grant Overstates'] === false,
+    understating[0]?.['Grant Overstates'],
+  );
+  check(
+    'the roll-up agrees with the per-state column',
+    countWhere(anomalousRecords, 'Understated States', 1) === 8,
+    countWhere(anomalousRecords, 'Understated States', 1),
+  );
+
+  // Ordinal 9 of 603174 does not exist in the catalog, so the row cannot be
+  // attached to any state -- reported access this sheet cannot place.
+  const incidentOwnerIncident = anomalousRecords.filter(
+    (record) => record['Role'] === 'Incident Owner' && record['Object Type'] === 'Incident',
+  );
+  check(
+    'a reported row that matches no state is counted, not dropped silently',
+    incidentOwnerIncident.length === 8 &&
+      incidentOwnerIncident.every((record) => record['Unmatched Reported Rows'] === 1),
+    incidentOwnerIncident.map((record) => record['Unmatched Reported Rows']),
+  );
+  check(
+    'and its lifecycle is named so the gap can be chased',
+    incidentOwnerIncident.every((record) => record['Unmatched Lifecycle Ids'] === '603174'),
+    incidentOwnerIncident[0]?.['Unmatched Lifecycle Ids'],
+  );
+}
+
+{
+  // A level the 0/1/2 encoding does not cover, on a state that does exist.
+  const unknownLevel = sourceWithExtraRows({
+    '449680:522608': [extraRow(449680, 522608, 710789, 0, 7)],
+  });
+  const unknownRepo = new MatrixRepository(unknownLevel, 60_000, 6);
+  const unknownExport = await exportGroupWorkbook(unknownRepo, GROUP_ID, { maxConcurrency: 6 });
+  const unknownSheet = await roundTrip(
+    unknownExport.workbook,
+    `${OUT_DIR}/unknown-level.xlsx`,
+    GROUP_NAME,
+  );
+  const unknownRecords = recordsOf(unknownSheet);
+
+  const odd = unknownRecords.find(
+    (record) => record['Role'] === 'Risk Champion' && record['Object Type'] === 'Cyber Control' &&
+      record['Reported Level'] === 7,
+  );
+  check(
+    'an unreadable level is its own outcome, and carries the raw integer',
+    odd?.['Reported Access'] === 'Unknown level (raw 7)' && odd['Reported Level'] === 7,
+    { access: odd?.['Reported Access'], level: odd?.['Reported Level'] },
+  );
+  check(
+    'it is neither "no access" nor "not reported"',
+    odd?.['Reported Access'] !== 'No access' && odd?.['Reported Access'] !== 'Not reported',
+  );
+  check(
+    'it does not count as an overstated grant',
+    odd?.['Grant Overstates'] === false,
+    odd?.['Grant Overstates'],
+  );
+  check(
+    'and the roll-up counts it apart from unreported',
+    unknownRecords
+      .filter((record) => record['Object Type'] === 'Cyber Control')
+      .every((record) => record['Unknown Level States'] === 1),
+    unknownRecords
+      .filter((record) => record['Object Type'] === 'Cyber Control')
+      .map((record) => record['Unknown Level States']),
+  );
+}
+
+/* -------------------------------------------------------------------------- */
+/* 6c. A failed requirements call is not "nothing is required"                */
+/* -------------------------------------------------------------------------- */
+
+console.log('\nexport: a failed requirements call says so');
+
+{
+  const noRequirements = new MockResolverSource();
+  noRequirements.fetchStateRequirements = async (): Promise<never> => {
+    throw new ResolverApiError(
+      'Upstream 503 for /object/objectType/stateRequired',
+      503,
+      '/object/objectType/stateRequired',
+    );
+  };
+  const repo = new MatrixRepository(noRequirements, 60_000, 6);
+  const degraded = await exportGroupWorkbook(repo, GROUP_ID, { maxConcurrency: 6 });
+  const degradedSheet = await roundTrip(
+    degraded.workbook,
+    `${OUT_DIR}/no-requirements.xlsx`,
+    GROUP_NAME,
+  );
+  const degradedRecords = recordsOf(degradedSheet);
+
+  check(
+    'every state row says unknown rather than 0 or blank',
+    stateRows(degradedRecords).length === 31 &&
+      stateRows(degradedRecords).every(
+        (record) =>
+          record['Requires Fields'] === 'unknown' &&
+          record['Requires Roles'] === 'unknown' &&
+          record['Requires Other'] === 'unknown',
+      ),
+    stateRows(degradedRecords)[0],
+  );
+  check(
+    'the failure is named in its own column',
+    stateRows(degradedRecords).every((record) =>
+      String(record['Requirements Error']).includes('503'),
+    ),
+  );
+  check(
+    'and the reported permissions are unaffected',
+    countWhere(degradedRecords, 'Reported Access', 'No access') === 1 &&
+      countWhere(degradedRecords, 'Grant Overstates', true) === 1,
   );
 }
 

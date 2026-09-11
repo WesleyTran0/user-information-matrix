@@ -68,11 +68,11 @@ static bundle).
 ```bash
 npm run check          # all six of the below
 npm run typecheck      # tsc -b: client, server and scripts projects
-npm run check:data     # 51 data-layer assertions against the fixtures
+npm run check:data     # 74 data-layer assertions against the fixtures
 npm run check:render   # 21 assertions rendering the real components
 npm run check:live-path # 15 assertions: real server vs. a fake Resolver upstream
 npm run check:dev-server # 7 assertions: the dev server's module graph + proxy
-npm run check:export   # 43 assertions against a written-and-reparsed .xlsx
+npm run check:export   # 62 assertions against a written-and-reparsed .xlsx
 ```
 
 `check:data` and `check:live-path` need no dependencies at all -- Node strips
@@ -101,13 +101,24 @@ Every column is a descriptor in `src/server/export/columns.ts`
 defined**: adding a field from the domain model to the sheet means appending one
 descriptor, with no change to the row builder or the workbook writer.
 
-Three negative outcomes are kept strictly distinct in the `Reported Access`
-column, because conflating them would misstate access: `No access` (the API
-reported level 0), `Not reported` (the call succeeded with no row for that
-state) and `Permissions unavailable` (the call failed -- see the
-`Permissions Error` column). The `Grant Overstates` column is the audit hook: it
-is TRUE exactly where a role holds the lifecycle grant but the API reports no
-access in that state, and blank -- never FALSE -- where nothing was reported.
+Four outcomes are kept strictly distinct in the `Reported Access` column,
+because conflating any two would misstate access: `No access` (the API reported
+level 0), `Not reported` (the call succeeded with no row for that state),
+`Permissions unavailable` (the call failed -- see the `Permissions Error`
+column) and `Unknown level (raw N)` (a level outside the 0/1/2 encoding). The
+same rule applies to the `Requires *` columns: a number always means the
+requirements call answered -- `0` is a reported zero -- and `unknown` means it
+failed.
+
+`Grant Overstates` and `Grant Understates` are the audit hooks. The first is
+TRUE where a role holds the lifecycle grant but the API reports no access in
+that state; the second where the API reports access the grant does not cover.
+Both are blank -- never FALSE -- where nothing was reported, so a filter on
+FALSE cannot pick up unverified rows. The per-object-type roll-ups
+(`Overstated States`, `Understated States`, `Unknown Level States`,
+`Unmatched Reported Rows`, `Unmatched Lifecycle Ids`,
+`Duplicate Reported Rows`) repeat down each block so a pivot can find problem
+object types without scanning states.
 
 Cost of one group, for R roles reaching T object types over P distinct
 (role, object type) pairs: `5 + R + P + T` upstream calls cold, 0 warm. The
