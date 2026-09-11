@@ -66,12 +66,13 @@ static bundle).
 ## Checks
 
 ```bash
-npm run check          # all five of the below
+npm run check          # all six of the below
 npm run typecheck      # tsc -b: client, server and scripts projects
-npm run check:data     # 36 data-layer assertions against the fixtures
+npm run check:data     # 51 data-layer assertions against the fixtures
 npm run check:render   # 21 assertions rendering the real components
 npm run check:live-path # 15 assertions: real server vs. a fake Resolver upstream
 npm run check:dev-server # 7 assertions: the dev server's module graph + proxy
+npm run check:export   # 43 assertions against a written-and-reparsed .xlsx
 ```
 
 `check:data` and `check:live-path` need no dependencies at all -- Node strips
@@ -84,6 +85,39 @@ swallowed any client source.
 against it with `DATA_SOURCE=live`, which is the only way to cover the
 `x-api-key` header, envelope unwrapping, the measured call budget and upstream
 error mapping.
+`check:export` writes a real workbook to `node_modules/.tmp/export/` and parses
+the bytes back, so a column that silently stops reaching the file fails the
+build. Its expected counts are hand-derived from the fixtures rather than
+recomputed from the code under test.
+
+## Excel export
+
+`src/server/export/` turns one group's matrix into a flat, denormalized sheet --
+one row per (group, role, object type, lifecycle, state) -- because that is what
+an Excel PivotTable consumes.
+
+Every column is a descriptor in `src/server/export/columns.ts`
+(`{ header, key, width, value }`). **That array is the only place a column is
+defined**: adding a field from the domain model to the sheet means appending one
+descriptor, with no change to the row builder or the workbook writer.
+
+Three negative outcomes are kept strictly distinct in the `Reported Access`
+column, because conflating them would misstate access: `No access` (the API
+reported level 0), `Not reported` (the call succeeded with no row for that
+state) and `Permissions unavailable` (the call failed -- see the
+`Permissions Error` column). The `Grant Overstates` column is the audit hook: it
+is TRUE exactly where a role holds the lifecycle grant but the API reports no
+access in that state, and blank -- never FALSE -- where nothing was reported.
+
+Cost of one group, for R roles reaching T object types over P distinct
+(role, object type) pairs: `5 + R + P + T` upstream calls cold, 0 warm. The
+export adds no endpoint of its own; P is bounded by R x T, so the drill-down
+fan-out runs through `mapWithConcurrency` at `RESOLVER_MAX_CONCURRENCY`.
+
+Not built: the all-groups export (P grows with the whole org and needs a job
+queue and a progress channel, not a request handler), and any HTTP route or UI
+affordance. `exportGroupWorkbook` takes a structural `MatrixExportSource`, so
+either can be added without touching the exporter.
 
 ## Layout
 
@@ -94,6 +128,7 @@ src/server/types/   resolver-api.ts -- raw wire DTOs, server-side by design
 src/server/http/    API client, TTL+single-flight cache, bounded concurrency
 src/server/data/    ResolverDataSource (live | mock), repository = call budget owner
 src/server/domain/  normalize -> catalog index -> access derivation
+src/server/export/  columns.ts (the only column definition) -> rows -> workbook
 src/server/routes/  HTTP surface and the error contract
 src/client/         React UI: group picker, role cards, object-type drill-down
                     (note: no client directory may sit at a URL starting with
