@@ -22,6 +22,12 @@ export default defineConfig(({ mode }) => {
     server: {
       port: 5173,
       proxy: {
+        // NOTE: this forwards *every* dev-server path beginning with /api,
+        // including requests for source modules. Client source must therefore
+        // never live under a directory whose URL starts with /api -- it would
+        // be proxied to the backend and 404 in the browser while the
+        // production build (which bundles it) still works. `check:dev-server`
+        // walks the module graph to catch exactly that.
         '/api': {
           target: `http://localhost:${apiPort}`,
           changeOrigin: true,

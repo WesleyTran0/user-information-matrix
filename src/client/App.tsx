@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { api } from './api/client.ts';
+import { api } from './services/api.ts';
 import { useAsync } from './hooks/useAsync.ts';
 import type { GroupId, RoleId } from '../shared/types/domain.ts';
 import { DerivationNotice } from './components/DerivationNotice.tsx';

@@ -57,15 +57,20 @@ static bundle).
 ## Checks
 
 ```bash
-npm run check          # all four of the below
+npm run check          # all five of the below
 npm run typecheck      # tsc -b: client, server and scripts projects
 npm run check:data     # 36 data-layer assertions against the fixtures
 npm run check:render   # 21 assertions rendering the real components
 npm run check:live-path # 15 assertions: real server vs. a fake Resolver upstream
+npm run check:dev-server # 7 assertions: the dev server's module graph + proxy
 ```
 
 `check:data` and `check:live-path` need no dependencies at all -- Node strips
 the types natively, so `node scripts/smoke.ts` runs them directly.
+`check:dev-server` exists because `vite build` and the render check both pass
+even when the *dev server* cannot serve a module to a browser: it walks the
+module graph the way a browser does and asserts the `/api` proxy has not
+swallowed any client source.
 `check:live-path` stands up a fake Resolver upstream and boots the real server
 against it with `DATA_SOURCE=live`, which is the only way to cover the
 `x-api-key` header, envelope unwrapping, the measured call budget and upstream
@@ -82,6 +87,8 @@ src/server/data/    ResolverDataSource (live | mock), repository = call budget o
 src/server/domain/  normalize -> catalog index -> access derivation
 src/server/routes/  HTTP surface and the error contract
 src/client/         React UI: group picker, role cards, object-type drill-down
+                    (note: no client directory may sit at a URL starting with
+                    /api -- the dev proxy owns that prefix)
 ```
 
 The wire/domain boundary is structural, not a convention: the raw DTOs live
