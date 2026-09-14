@@ -179,7 +179,7 @@ export async function exportAllGroupsWorkbook(
     const groupRows = await buildMatrixRows(matrix, fetchDetail, {
       maxConcurrency: options.maxConcurrency,
     });
-    rows.push(...groupRows);
+    appendAll(rows, groupRows);
     done += 1;
     options.onProgress?.({
       phase: 'fetching',
@@ -197,12 +197,42 @@ export async function exportAllGroupsWorkbook(
     rowsSoFar: rows.length,
   });
 
+  assertFitsInSheet(rows.length);
+
   const workbook = createWorkbook();
   addOverviewSheet(workbook, plan, rows, skipped);
   addGroupsSheet(workbook, plan);
   addMatrixSheet(workbook, rows, { sheetName: 'Permissions' });
 
   return { workbook, plan, rows, skipped };
+}
+
+/**
+ * Appends one array to another.
+ *
+ * NOT `target.push(...source)`: spreading passes every element as a separate
+ * argument, and a single large group overflows the call stack. Found the hard
+ * way on a 207-group run -- a five-group trial never got near the limit.
+ */
+export function appendAll<T>(target: T[], source: readonly T[]): void {
+  for (const item of source) target.push(item);
+}
+
+/**
+ * Excel's hard limit, header row included. Worth checking explicitly: writing
+ * past it produces a file Excel refuses to open, which is a far worse outcome
+ * than a clear failure naming the count.
+ */
+export const EXCEL_MAX_ROWS = 1_048_576;
+
+/** Throws with a usable message rather than writing a file Excel will reject. */
+export function assertFitsInSheet(rowCount: number): void {
+  if (rowCount + 1 > EXCEL_MAX_ROWS) {
+    throw new Error(
+      `The permissions sheet would need ${rowCount.toLocaleString()} rows, past Excel's ` +
+        `limit of ${EXCEL_MAX_ROWS.toLocaleString()}. Export in slices with --groups or --limit.`,
+    );
+  }
 }
 
 /* -------------------------------------------------------------------------- */

@@ -29,6 +29,9 @@ import {
 } from '../src/server/export/index.ts';
 import type { ExportColumn } from '../src/server/export/index.ts';
 import {
+  EXCEL_MAX_ROWS,
+  appendAll,
+  assertFitsInSheet,
   exportAllGroupsWorkbook,
   planAllGroupsExport,
 } from '../src/server/export/allGroups.ts';
@@ -753,6 +756,54 @@ console.log('\nexport: the master workbook covers every group');
     overview.some((line) => line.includes('Groups skipped')) &&
       overview.some((line) => line.includes('Risk & Compliance')),
     overview.filter((line) => line.toLowerCase().includes('skip')),
+  );
+}
+
+/* -------------------------------------------------------------------------- */
+/* 11. Scale: the two ways an org-wide export breaks                           */
+/* -------------------------------------------------------------------------- */
+
+console.log('\nexport: it survives org-scale row counts');
+
+{
+  // A 207-group run died here: `push(...rows)` passes every element as an
+  // argument and overflows the stack. Five groups never got near the limit.
+  const big = new Array<number>(300_000).fill(1);
+  let spreadThrew = false;
+  try {
+    const naive: number[] = [];
+    naive.push(...big);
+  } catch {
+    spreadThrew = true;
+  }
+  check('the spread this replaced does overflow at this size', spreadThrew);
+
+  const target: number[] = [];
+  appendAll(target, big);
+  check('appendAll handles it', target.length === 300_000, target.length);
+  check('and preserves order', target[0] === 1 && target.length === big.length);
+}
+
+{
+  check('a sheet within Excel limits is allowed', (() => {
+    try {
+      assertFitsInSheet(EXCEL_MAX_ROWS - 1);
+      return true;
+    } catch {
+      return false;
+    }
+  })());
+
+  let message = '';
+  try {
+    assertFitsInSheet(EXCEL_MAX_ROWS);
+  } catch (error) {
+    message = error instanceof Error ? error.message : String(error);
+  }
+  check(
+    'one row too many fails with a message naming the limit and the way out',
+    message.includes("Excel's limit") && message.includes('--groups'),
+    message,
   );
 }
 
