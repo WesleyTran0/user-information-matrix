@@ -112,6 +112,14 @@ function describeIssue(objectType: ObjectTypeAccessDetail): string {
   if (objectType.permissionSummary.unmatchedReportedRows > 0) {
     issues.push(`${objectType.permissionSummary.unmatchedReportedRows} unplaceable row(s)`);
   }
+  // The matrix sheet no longer carries a grant-vs-reported column, but access
+  // reported outside the role's grant list still means the role list may be
+  // missing an object type -- worth one phrase here rather than losing it.
+  if (objectType.permissionSummary.understatedStates > 0) {
+    issues.push(
+      `${objectType.permissionSummary.understatedStates} state(s) with access outside the grant`,
+    );
+  }
   return issues.join('; ');
 }
 
