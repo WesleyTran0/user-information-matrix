@@ -280,6 +280,19 @@ export function addOverviewSheet(
   sheet.addRow(['Distinct roles', plan.distinctRoles]);
   sheet.addRow(['Distinct object types', plan.distinctObjectTypes]);
   sheet.addRow(['Permission rows', rows.length]);
+
+  // 207 groups against 173 on the Permissions sheet looks like data loss
+  // until you know why, so the reconciliation is stated rather than left to
+  // the reader. Group names are not unique either, which is why both sheets
+  // carry ids.
+  const withoutRoles = plan.groups.filter((matrix) => matrix.roles.length === 0).length;
+  if (withoutRoles > 0) {
+    sheet.addRow([
+      'Groups with no roles',
+      `${withoutRoles} — listed on User Groups, absent from Permissions because there is nothing to report. ` +
+        `${plan.groups.length - withoutRoles} groups appear on Permissions.`,
+    ]);
+  }
   sheet.addRow([]);
 
   writeHeaderRow(sheet, ['Sheet', 'What it contains']);

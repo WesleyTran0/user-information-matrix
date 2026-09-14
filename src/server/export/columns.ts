@@ -106,7 +106,12 @@ function capability(
 export const MATRIX_COLUMNS: readonly ExportColumn[] = [
   /* identity --------------------------------------------------------------- */
   { header: 'Group', key: 'group', width: 34, value: (row) => row.group.name },
+  // Names are not unique: 28 of this tenant's 207 groups share a name with
+  // another group, so filtering this sheet by name alone silently merges two
+  // different groups. The id sits next to the name it disambiguates.
+  { header: 'Group Id', key: 'groupId', width: 11, value: (row) => row.group.id },
   { header: 'Role', key: 'role', width: 30, value: (row) => row.role.name },
+  { header: 'Role Id', key: 'roleId', width: 10, value: (row) => row.role.id },
   {
     header: 'Object Type',
     key: 'objectType',

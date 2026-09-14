@@ -28,6 +28,8 @@ import {
   writeWorkbookFile,
 } from '../src/server/export/index.ts';
 import type { ExportColumn } from '../src/server/export/index.ts';
+import { addOverviewSheet } from '../src/server/export/allGroups.ts';
+import { createWorkbook } from '../src/server/export/workbook.ts';
 import {
   EXCEL_MAX_ROWS,
   appendAll,
@@ -218,7 +220,9 @@ check(
  */
 const EXPECTED_HEADERS = [
   'Group',
+  'Group Id',
   'Role',
+  'Role Id',
   'Object Type',
   'Lifecycle',
   'State',
@@ -248,6 +252,11 @@ check(
 check(
   'every row names the group and role it belongs to',
   records.every((record) => record['Group'] === GROUP_NAME && record['Role'] !== null),
+);
+check(
+  'and carries their ids, since group names are not unique',
+  records.every((record) => record['Group Id'] === GROUP_ID && typeof record['Role Id'] === 'number'),
+  records[0],
 );
 check('the sheet has rows at all', stateRows(records).length > 0, records.length);
 check('in-memory rows and written rows agree', records.length === exported.rows.length, {
@@ -685,6 +694,36 @@ console.log('\nexport: the master workbook covers every group');
     'and carries the blank-is-not-false caveat',
     overviewText.includes('not the same as FALSE'),
   );
+  // No fixture group has zero roles, so the reconciliation line is rendered
+  // against a synthetic plan rather than by distorting the fixtures.
+  {
+    const emptyGroup = { ...master.plan.groups[0]!, roles: [] };
+    const book = createWorkbook();
+    addOverviewSheet(
+      book,
+      { ...master.plan, groups: [...master.plan.groups, emptyGroup] },
+      master.rows,
+      [],
+    );
+    const lines = linesOf(book.worksheets[0]!).join('\n');
+    check(
+      'a group with no roles is reconciled against the permissions sheet',
+      lines.includes('Groups with no roles') && lines.includes('nothing to report'),
+      lines.split('\n').filter((line) => line.includes('no roles')),
+    );
+    check(
+      'and the line does not appear when every group has roles',
+      !linesOf(
+        (() => {
+          const clean = createWorkbook();
+          addOverviewSheet(clean, master.plan, master.rows, []);
+          return clean.worksheets[0]!;
+        })(),
+      )
+        .join('\n')
+        .includes('Groups with no roles'),
+    );
+  }
 
   const groupsSheet = await roundTrip(master.workbook, masterPath, 'User Groups');
   const groupRecords = recordsOf(groupsSheet);
