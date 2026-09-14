@@ -533,3 +533,22 @@ body {
   color: var(--text-muted);
   border-style: dashed;
 }
+
+/* ---- export ------------------------------------------------------------ */
+
+.export { margin-top: 12px; display: flex; flex-direction: column; gap: 6px; }
+
+.export__button {
+  padding: 7px 12px;
+  border: 1px solid var(--accent);
+  border-radius: var(--radius);
+  background: var(--accent-soft);
+  color: var(--accent);
+  font: inherit;
+  font-weight: 600;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.export__button:hover:not(:disabled) { background: var(--accent); color: #ffffff; }
+.export__button:disabled { opacity: 0.6; cursor: progress; }

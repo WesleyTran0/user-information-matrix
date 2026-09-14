@@ -27,6 +27,21 @@ import type { StateRequirements } from '../../shared/types/domain.ts';
 import type { ExportColumn, MatrixExportRow } from './types.ts';
 
 /**
+ * Trigger names for one side of the granted/not-granted split.
+ *
+ * Null rather than an empty string when the state itself is absent, so an
+ * incomplete tuple leaves a genuinely empty cell instead of looking like a
+ * state that happens to have no triggers.
+ */
+function joinTriggerNames(row: MatrixExportRow, granted: boolean): string | null {
+  if (row.state === null) return null;
+  const names = row.state.triggers
+    .filter((trigger) => trigger.granted === granted)
+    .map((trigger) => trigger.name);
+  return names.length === 0 ? '' : names.join(', ');
+}
+
+/**
  * The four negative-ish outcomes below must never collapse into one cell value.
  * They mean different things and an auditor acting on the sheet needs to tell
  * them apart:
@@ -178,25 +193,52 @@ export const MATRIX_COLUMNS: readonly ExportColumn[] = [
     value: (row) => row.state?.permission?.capabilities.canBulkLaunch ?? null,
   },
   {
-    header: 'Trigger Count',
+    header: 'Triggers Granted',
     key: 'triggerCount',
-    width: 13,
-    value: (row) => row.state?.permission?.triggerIds.length ?? null,
+    width: 15,
+    // Counted off the merged trigger list rather than the permission row, so
+    // it agrees with the names in the next column.
+    value: (row) =>
+      row.state === null ? null : row.state.triggers.filter((trigger) => trigger.granted).length,
   },
   {
-    header: 'Trigger Ids',
+    header: 'Triggers Available',
+    key: 'triggerAvailableCount',
+    width: 17,
+    // The denominator: every trigger on the state, granted or not. "2 of 24"
+    // is the fact an auditor is actually after.
+    value: (row) => (row.state === null ? null : row.state.triggers.length),
+  },
+  {
+    header: 'Trigger Names (granted)',
+    key: 'triggerNames',
+    width: 40,
+    // Joined into one cell: one row per trigger would multiply the sheet by a
+    // factor nobody asked to pivot on.
+    value: (row) => joinTriggerNames(row, true),
+  },
+  {
+    header: 'Trigger Names (not granted)',
+    key: 'triggerNamesOther',
+    width: 40,
+    value: (row) => joinTriggerNames(row, false),
+  },
+  {
+    header: 'Trigger Ids (granted)',
     key: 'triggerIds',
-    width: 30,
-    // Joined into one cell: trigger ids have no names upstream, and one row per
-    // trigger would multiply the sheet by a factor nobody asked to pivot on.
+    width: 24,
+    // Kept alongside the names: ids are what the API rows reference, so they
+    // are the join key if anyone cross-references this sheet with a raw dump.
+    // Emitted in the same order as the names column, so the Nth id is the Nth
+    // name rather than requiring a second lookup.
     value: (row) => {
-      const triggerIds = row.state?.permission?.triggerIds;
-      if (triggerIds === undefined) return null;
-      return triggerIds.length === 0 ? '' : triggerIds.join(', ');
+      if (row.state === null) return null;
+      const ids = row.state.triggers.filter((trigger) => trigger.granted).map((t) => t.id);
+      return ids.length === 0 ? '' : ids.join(', ');
     },
   },
 
-  /* grant-vs-reported comparison -------------------------------------------- */
+  /* grant vs. reported ------------------------------------------------------ */
   {
     header: 'Grant Covers State',
     key: 'grantCoversState',

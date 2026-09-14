@@ -1,6 +1,8 @@
 import express, { type NextFunction, type Request, type Response } from 'express';
 import type { ApiErrorBody } from '../../shared/types/domain.ts';
 import { MatrixRepository, NotFoundError } from '../data/repository.ts';
+import { exportGroupWorkbook } from '../export/index.ts';
+import { workbookToBuffer } from '../export/workbook.ts';
 import { ResolverApiError } from '../http/resolverClient.ts';
 
 class BadRequestError extends Error {
@@ -18,6 +20,19 @@ function requireId(raw: string | undefined, label: string): number {
   return Number.parseInt(raw, 10);
 }
 
+/**
+ * A safe, recognisable download name.
+ *
+ * Group names contain spaces, parentheses and slashes; anything outside a
+ * conservative set becomes a hyphen so the filename cannot break the
+ * Content-Disposition header or the user's filesystem.
+ */
+function exportFileName(groupName: string): string {
+  const safe = groupName.replace(/[^A-Za-z0-9._-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 60);
+  const date = new Date().toISOString().slice(0, 10);
+  return `${safe === '' ? 'user-group' : safe}-permissions-${date}.xlsx`;
+}
+
 /** Express 4 does not forward rejected promises, so wrap async handlers. */
 function asyncRoute(
   handler: (req: Request, res: Response) => Promise<void>,
@@ -33,6 +48,8 @@ export interface ApiRouterOptions {
    * it is only mounted where that cannot be triggered by a stranger.
    */
   exposeCacheControl: boolean;
+  /** Ceiling on the export's parallel drill-down fetches. */
+  maxConcurrency: number;
 }
 
 export function createApiRouter(
@@ -57,6 +74,36 @@ export function createApiRouter(
     asyncRoute(async (req, res) => {
       const groupId = requireId(req.params.groupId, 'groupId');
       res.json(await repository.getGroupMatrix(groupId));
+    }),
+  );
+
+  /**
+   * Streams the group's workbook.
+   *
+   * Cost is the group matrix plus one drill-down per (role, object type)
+   * pair, so this is by far the most expensive route -- a large group is
+   * hundreds of upstream calls. It is a plain GET so the browser can download
+   * it directly, and everything it fetches lands in the same caches the UI
+   * uses, so an export right after browsing a group is largely free.
+   */
+  router.get(
+    '/groups/:groupId/export',
+    asyncRoute(async (req, res) => {
+      const groupId = requireId(req.params.groupId, 'groupId');
+      const { workbook, matrix, rows } = await exportGroupWorkbook(repository, groupId, {
+        maxConcurrency: options.maxConcurrency,
+      });
+      const buffer = await workbookToBuffer(workbook);
+
+      res.setHeader(
+        'Content-Type',
+        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      );
+      res.setHeader('Content-Disposition', `attachment; filename="${exportFileName(matrix.group.name)}"`);
+      res.setHeader('Content-Length', String(buffer.byteLength));
+      // Lets the client report what it downloaded without parsing the file.
+      res.setHeader('X-Export-Row-Count', String(rows.length));
+      res.end(buffer);
     }),
   );
 

@@ -44,6 +44,8 @@ function check(label: string, condition: boolean, detail?: unknown): void {
 const OUT_DIR = 'node_modules/.tmp/export';
 const GROUP_ID = 280774; // Incident Supervisor
 const GROUP_NAME = 'Incident Supervisor';
+/** The matrix sheet has a fixed name; the group is named on the Summary sheet. */
+const MATRIX_SHEET = 'Permission Matrix';
 
 /* -------------------------------------------------------------------------- */
 /* Read-back helpers: a sheet as plain records keyed by header                 */
@@ -196,10 +198,17 @@ console.log('export: the workbook is written and parses back');
 const source = countingSource(new MockResolverSource());
 const repository = new MatrixRepository(source, 60_000, 6);
 const exported = await exportGroupWorkbook(repository, GROUP_ID, { maxConcurrency: 6 });
-const sheet = await roundTrip(exported.workbook, `${OUT_DIR}/matrix.xlsx`, GROUP_NAME);
+const sheet = await roundTrip(exported.workbook, `${OUT_DIR}/matrix.xlsx`, 'Permission Matrix');
 const records = recordsOf(sheet);
 
-check('the sheet is named after the group', sheet.name === GROUP_NAME, sheet.name);
+// Summary leads so Excel opens on something readable; the matrix is the pivot
+// source behind it.
+check(
+  'the workbook leads with Summary, then the matrix, then Members',
+  exported.workbook.worksheets.map((candidate) => candidate.name).join('|') ===
+    'Summary|Permission Matrix|Members',
+  exported.workbook.worksheets.map((candidate) => candidate.name),
+);
 check(
   'every declared column reached the file, in order',
   headersOf(sheet).join('|') === MATRIX_COLUMNS.map((column) => column.header).join('|'),
@@ -233,6 +242,111 @@ check(
   'all three roles appear',
   new Set(records.map((record) => record['Role'])).size === 3,
   [...new Set(records.map((record) => record['Role']))],
+);
+
+/* -------------------------------------------------------------------------- */
+/* 1b. The Summary sheet: which group, and what each role can do              */
+/* -------------------------------------------------------------------------- */
+
+console.log('\nexport: the summary sheet answers the two obvious questions');
+
+const summarySheet = await roundTrip(exported.workbook, `${OUT_DIR}/matrix.xlsx`, 'Summary');
+const summaryCells: string[] = [];
+summarySheet.eachRow((row) => {
+  const values = (row.values as unknown[]).slice(1).map((value) => String(value ?? ''));
+  summaryCells.push(values.join('\u0001'));
+});
+const summaryText = summaryCells.join('\n');
+
+check(
+  'the group is named at the top',
+  summaryCells[0]?.startsWith(`User group: ${GROUP_NAME}`) === true,
+  summaryCells[0],
+);
+check('the group id is stated', summaryText.includes('Group id'), false);
+check(
+  'membership and role counts are stated',
+  summaryText.includes('Members') && summaryText.includes('Roles'),
+);
+check(
+  'the grant-vs-reported caveat travels with the numbers',
+  summaryText.includes('wider net'),
+);
+
+const summaryHeaderIndex = summaryCells.findIndex((line) => line.startsWith('Role\u0001'));
+check('the per-role table has a header', summaryHeaderIndex > 0, summaryHeaderIndex);
+
+const summaryRows = summaryCells
+  .slice(summaryHeaderIndex + 1)
+  .map((line) => line.split('\u0001'))
+  .filter((cells) => cells[0] !== '');
+
+check(
+  'every role in the group appears',
+  ['Incident Owner', 'Additional Access', 'Risk Champion'].every((role) =>
+    summaryRows.some((cells) => cells[0] === role),
+  ),
+  summaryRows.map((cells) => cells[0]),
+);
+
+const incidentSummary = summaryRows.find(
+  (cells) => cells[0] === 'Incident Owner' && cells[2] === 'Incident',
+);
+check(
+  'a role/object-type line carries its per-level state counts',
+  incidentSummary?.[4] === '2' && incidentSummary[5] === '2' && incidentSummary[6] === '1',
+  incidentSummary,
+);
+check(
+  'and its trigger totals, granted out of available',
+  incidentSummary?.[9] === '3' && incidentSummary[10] === '9',
+  { granted: incidentSummary?.[9], available: incidentSummary?.[10] },
+);
+check(
+  'the summary counts agree with the matrix sheet',
+  Number(incidentSummary?.[8]) ===
+    stateRows(records).filter(
+      (record) => record['Role'] === 'Incident Owner' && record['Object Type'] === 'Incident',
+    ).length,
+  incidentSummary?.[8],
+);
+
+// Group 280774 has no such role, so this is checked against 280773, where
+// Command Center Portal holds no grants at all.
+const adminExport = await exportGroupWorkbook(
+  new MatrixRepository(new MockResolverSource(), 60_000, 6),
+  280773,
+  { maxConcurrency: 6 },
+);
+const adminSummary = await roundTrip(
+  adminExport.workbook,
+  `${OUT_DIR}/admin.xlsx`,
+  'Summary',
+);
+const adminLines: string[] = [];
+adminSummary.eachRow((row) => {
+  adminLines.push((row.values as unknown[]).slice(1).map((v) => String(v ?? '')).join('\u0001'));
+});
+check(
+  'a role that reaches nothing is still listed, not dropped',
+  adminLines.some((line) => line.startsWith('Command Center Portal\u0001') &&
+    line.includes('(no object types)')),
+  adminLines.filter((line) => line.includes('Command Center')),
+);
+
+/* -------------------------------------------------------------------------- */
+/* 1c. The Members sheet                                                      */
+/* -------------------------------------------------------------------------- */
+
+console.log('\nexport: the members sheet lists the group');
+
+const membersSheet = await roundTrip(exported.workbook, `${OUT_DIR}/matrix.xlsx`, 'Members');
+const memberRecords = recordsOf(membersSheet);
+check('every member is listed', memberRecords.length === exported.matrix.users.length,
+  { sheet: memberRecords.length, matrix: exported.matrix.users.length });
+check(
+  'with the fields that identify them',
+  memberRecords.every((record) => record['Name'] !== '' && record['Email'] !== ''),
 );
 
 /* -------------------------------------------------------------------------- */
@@ -354,11 +468,24 @@ check(
   openState,
 );
 check(
-  'triggers are counted and listed',
-  // Fixture trigger ids now come from the workflow definition, since a role's
-  // granted triggers are always a subset of the state's available ones.
-  openState?.['Trigger Count'] === 2 && openState['Trigger Ids'] === '9003, 9005',
-  { count: openState?.['Trigger Count'], ids: openState?.['Trigger Ids'] },
+  'granted triggers are counted against the available total',
+  openState?.['Triggers Granted'] === 2 && openState['Triggers Available'] === 4,
+  { granted: openState?.['Triggers Granted'], available: openState?.['Triggers Available'] },
+);
+check(
+  'triggers are named, on both sides of the split',
+  openState?.['Trigger Names (granted)'] === 'Escalate to Supervisor, Revert to Triage' &&
+    String(openState['Trigger Names (not granted)']).includes('Overdue Reminder'),
+  {
+    granted: openState?.['Trigger Names (granted)'],
+    other: openState?.['Trigger Names (not granted)'],
+  },
+);
+check(
+  'and the ids remain as a join key, aligned with the names',
+  // Same order as the names column, so the Nth id is the Nth name.
+  openState?.['Trigger Ids (granted)'] === '9005, 9003',
+  openState?.['Trigger Ids (granted)'],
 );
 
 const investigation = records.find(
@@ -463,7 +590,7 @@ console.log('\nexport: the three negative outcomes never collapse');
 
   const degradedRepo = new MatrixRepository(failing, 60_000, 6);
   const degraded = await exportGroupWorkbook(degradedRepo, GROUP_ID, { maxConcurrency: 6 });
-  const degradedSheet = await roundTrip(degraded.workbook, `${OUT_DIR}/degraded.xlsx`, GROUP_NAME);
+  const degradedSheet = await roundTrip(degraded.workbook, `${OUT_DIR}/degraded.xlsx`, MATRIX_SHEET);
   const degradedRecords = recordsOf(degradedSheet);
 
   check(
@@ -565,7 +692,7 @@ function extraRow(
   const anomalousSheet = await roundTrip(
     anomalousExport.workbook,
     `${OUT_DIR}/anomalous.xlsx`,
-    GROUP_NAME,
+    MATRIX_SHEET,
   );
   const anomalousRecords = recordsOf(anomalousSheet);
 
@@ -618,7 +745,7 @@ function extraRow(
   const unknownSheet = await roundTrip(
     unknownExport.workbook,
     `${OUT_DIR}/unknown-level.xlsx`,
-    GROUP_NAME,
+    MATRIX_SHEET,
   );
   const unknownRecords = recordsOf(unknownSheet);
 
@@ -671,7 +798,7 @@ console.log('\nexport: a failed requirements call says so');
   const degradedSheet = await roundTrip(
     degraded.workbook,
     `${OUT_DIR}/no-requirements.xlsx`,
-    GROUP_NAME,
+    MATRIX_SHEET,
   );
   const degradedRecords = recordsOf(degradedSheet);
 
@@ -716,7 +843,7 @@ console.log('\nexport: adding a column is one descriptor');
     maxConcurrency: 6,
     columns: [...MATRIX_COLUMNS, extra],
   });
-  const widenedSheet = await roundTrip(widened.workbook, `${OUT_DIR}/widened.xlsx`, GROUP_NAME);
+  const widenedSheet = await roundTrip(widened.workbook, `${OUT_DIR}/widened.xlsx`, MATRIX_SHEET);
   const widenedHeaders = headersOf(widenedSheet);
   const widenedRecords = recordsOf(widenedSheet);
 

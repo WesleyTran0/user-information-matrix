@@ -32,14 +32,37 @@ export function sanitizeSheetName(name: string): string {
   return cleaned.slice(0, 31);
 }
 
+/** A workbook with this app's metadata and no sheets yet. */
+export function createWorkbook(): Workbook {
+  const workbook = new ExcelJS.Workbook();
+  workbook.creator = 'user-information-matrix';
+  workbook.created = new Date();
+  return workbook;
+}
+
+/** Convenience for callers that want only the matrix sheet. */
 export function buildWorkbook(
   rows: readonly MatrixExportRow[],
   options: WorkbookOptions = {},
 ): Workbook {
+  const workbook = createWorkbook();
+  addMatrixSheet(workbook, rows, options);
+  return workbook;
+}
+
+/**
+ * Appends the flat matrix sheet.
+ *
+ * Separate from `buildWorkbook` so a caller can control sheet order -- exceljs
+ * appends, and its `orderNo` is not in the published types, so the order the
+ * sheets are added in is the order they appear.
+ */
+export function addMatrixSheet(
+  workbook: Workbook,
+  rows: readonly MatrixExportRow[],
+  options: WorkbookOptions = {},
+): Worksheet {
   const columns = options.columns ?? MATRIX_COLUMNS;
-  const workbook = new ExcelJS.Workbook();
-  workbook.creator = 'user-information-matrix';
-  workbook.created = new Date();
 
   const sheet = workbook.addWorksheet(sanitizeSheetName(options.sheetName ?? DEFAULT_SHEET_NAME), {
     views: [{ state: 'frozen', ySplit: 1 }],
@@ -69,7 +92,7 @@ export function buildWorkbook(
     };
   }
 
-  return workbook;
+  return sheet;
 }
 
 function styleHeader(sheet: Worksheet, columnCount: number): void {

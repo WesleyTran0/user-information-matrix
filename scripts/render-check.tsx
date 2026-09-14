@@ -14,6 +14,11 @@ import { RoleCard } from '../src/client/components/RoleCard.tsx';
 import { UserList } from '../src/client/components/UserList.tsx';
 import { DerivationNotice } from '../src/client/components/DerivationNotice.tsx';
 import { ObjectTypeDetailView } from '../src/client/components/ObjectTypeDetail.tsx';
+import {
+  CONFIRM_THRESHOLD,
+  ExportButton,
+  estimateCalls,
+} from '../src/client/components/ExportButton.tsx';
 import { buildDerivationNote } from '../src/server/domain/access.ts';
 import { MatrixRepository } from '../src/server/data/repository.ts';
 import { MockResolverSource } from '../src/server/data/mockSource.ts';
@@ -248,6 +253,43 @@ expect(
     'no lifecycle states',
   ),
 );
+
+// The export affordance: present, and honest about what it will cost.
+{
+  const small = text(renderToString(<ExportButton matrix={matrix} />));
+  expect('the export button renders on a loaded group', small.includes('Export to Excel'));
+  expect(
+    'and states its cost up front',
+    small.includes('upstream API calls') || small.includes('upstream API call'),
+  );
+
+  // The confirm step is a click away, which renderToString cannot reach, so
+  // the cost rule itself is asserted directly.
+  const pairs = matrix.roles.reduce((total, role) => total + role.objectTypes.length, 0);
+  expect(
+    'the estimate counts one call per role/object-type pair plus two per object type',
+    estimateCalls(matrix) === pairs + matrix.objectTypeReach * 2,
+  );
+
+  const wide: typeof matrix = {
+    ...matrix,
+    objectTypeReach: 60,
+    roles: matrix.roles.map((role) => ({
+      ...role,
+      objectTypes: Array.from({ length: 40 }, () => role.objectTypes[0]).filter(
+        (entry) => entry !== undefined,
+      ),
+    })),
+  };
+  expect(
+    'a large group lands above the confirmation threshold',
+    estimateCalls(wide) > CONFIRM_THRESHOLD,
+  );
+  expect(
+    'while this fixture group stays a one-click action',
+    estimateCalls(matrix) <= CONFIRM_THRESHOLD,
+  );
+}
 
 console.log(`\n${failures === 0 ? 'PASS' : `FAIL (${failures})`}`);
 process.exit(failures === 0 ? 0 : 1);

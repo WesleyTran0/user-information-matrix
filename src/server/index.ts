@@ -31,7 +31,10 @@ function main(): void {
   app.use(express.json());
   // Cache invalidation stays off in production: it is unauthenticated and
   // forces a full upstream re-fetch.
-  app.use('/api', createApiRouter(repository, { exposeCacheControl: !config.isProduction }));
+  app.use('/api', createApiRouter(repository, {
+      exposeCacheControl: !config.isProduction,
+      maxConcurrency: config.maxConcurrency,
+    }));
 
   if (config.isProduction) {
     // Vite's build output; `npm run build` must have run first.

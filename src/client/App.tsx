@@ -3,6 +3,7 @@ import { api } from './services/api.ts';
 import { useAsync } from './hooks/useAsync.ts';
 import type { GroupId, RoleId } from '../shared/types/domain.ts';
 import { DerivationNotice } from './components/DerivationNotice.tsx';
+import { ExportButton } from './components/ExportButton.tsx';
 import { GroupPicker } from './components/GroupPicker.tsx';
 import { Message } from './components/Message.tsx';
 import { RoleCard, type Selection } from './components/RoleCard.tsx';
@@ -109,6 +110,7 @@ export function App() {
                   {value.objectTypeReach} object{' '}
                   {value.objectTypeReach === 1 ? 'type' : 'types'} reachable
                 </p>
+                <ExportButton matrix={value} />
                 {value.group.reportedUserCount !== null &&
                   value.group.reportedUserCount !== value.users.length && (
                     <p className="warning">
