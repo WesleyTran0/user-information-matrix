@@ -18,7 +18,8 @@
     "check:render": "vite build --config vite.render-check.config.ts && node node_modules/.tmp/render/render-check.js",
     "check:live-path": "node scripts/live-path-check.ts",
     "check:dev-server": "node scripts/dev-server-check.ts",
-    "check:export": "node scripts/export-check.ts"
+    "check:export": "node scripts/export-check.ts",
+    "export:all": "node --env-file-if-exists=.env scripts/export-all-groups.ts"
   },
   "dependencies": {
     "exceljs": "^4.4.0",

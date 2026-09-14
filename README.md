@@ -65,6 +65,32 @@ The key stays on the server; the browser only ever talks to this app's `/api`.
 Production: `npm run build && npm start` (one process serves the API and the
 static bundle).
 
+## Exports
+
+A single group, from the UI: pick it and press **Export to Excel**. Two sheets —
+**Summary** (the group, and one line per role and object type saying what it can
+do) and **Permission Matrix** (one row per state, built as a PivotTable source).
+
+Every group, from the command line:
+
+```bash
+npm run export:all -- --dry-run        # what would this cost?
+npm run export:all                     # exports/all-groups-<date>.xlsx
+npm run export:all -- --limit 5        # a trial run over the first 5 groups
+npm run export:all -- --groups 1,2,3   # specific group ids
+```
+
+The master workbook has three sheets: **Overview** (what each sheet is, and when
+it was taken), **User Groups** (id, description, members, roles, object types
+reachable), and **Permissions** (the same matrix columns, spanning every group).
+
+It is a script rather than a route because the cost scales with the org: one
+call per distinct (role, object type) pair. It runs in two phases and reports
+the cost between them, so `--dry-run` answers "what would this cost?" for the
+price of the cheap calls alone. Measured against a live tenant: 207 groups,
+205 distinct roles, 186 object types, **2,044 pairs** — 210 calls to plan, about
+2,400 to fetch.
+
 ## Checks
 
 ```bash

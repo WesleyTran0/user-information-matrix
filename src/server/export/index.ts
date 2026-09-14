@@ -27,7 +27,6 @@
  * **Summary** (first, and what Excel opens on) names the group and gives one
  * line per role and object type: how many states the role can edit, read, or
  * not touch. **Permission Matrix** is the flat per-state pivot source.
- * **Members** lists who is in the group.
  *
  * Deliberately not built here: the all-groups export, which grows P with the
  * whole org and would need a job queue and a progress channel rather than a
@@ -42,7 +41,7 @@ import type {
 } from '../../shared/types/domain.ts';
 import { buildMatrixRows, type ObjectTypeDetailFetcher } from './rows.ts';
 import { addMatrixSheet, createWorkbook, type WorkbookOptions } from './workbook.ts';
-import { addMembersSheet, addSummarySheet } from './summary.ts';
+import { addSummarySheet } from './summary.ts';
 import type { MatrixExportRow } from './types.ts';
 import type { Workbook } from 'exceljs';
 
@@ -87,7 +86,6 @@ export async function exportGroupWorkbook(
     sheetName: options.sheetName ?? 'Permission Matrix',
     ...(options.columns === undefined ? {} : { columns: options.columns }),
   });
-  addMembersSheet(workbook, matrix);
 
   return { workbook, rows, matrix };
 }

@@ -28,6 +28,10 @@ import {
   writeWorkbookFile,
 } from '../src/server/export/index.ts';
 import type { ExportColumn } from '../src/server/export/index.ts';
+import {
+  exportAllGroupsWorkbook,
+  planAllGroupsExport,
+} from '../src/server/export/allGroups.ts';
 import type { ApiRolePermissionRow } from '../src/server/types/resolver-api.ts';
 
 let failures = 0;
@@ -198,9 +202,9 @@ const sheet = await roundTrip(exported.workbook, `${OUT_DIR}/matrix.xlsx`, MATRI
 const records = recordsOf(sheet);
 
 check(
-  'the workbook leads with Summary, then the matrix, then Members',
+  'the workbook is Summary then the matrix',
   exported.workbook.worksheets.map((candidate) => candidate.name).join('|') ===
-    'Summary|Permission Matrix|Members',
+    'Summary|Permission Matrix',
   exported.workbook.worksheets.map((candidate) => candidate.name),
 );
 
@@ -420,23 +424,6 @@ check(
 );
 
 /* -------------------------------------------------------------------------- */
-/* 5. The Members sheet                                                        */
-/* -------------------------------------------------------------------------- */
-
-console.log('\nexport: the members sheet lists the group');
-
-const membersSheet = await roundTrip(exported.workbook, `${OUT_DIR}/matrix.xlsx`, 'Members');
-const memberRecords = recordsOf(membersSheet);
-check('every member is listed', memberRecords.length === exported.matrix.users.length, {
-  sheet: memberRecords.length,
-  matrix: exported.matrix.users.length,
-});
-check(
-  'with the fields that identify them',
-  memberRecords.every((record) => record['Name'] !== '' && record['Email'] !== ''),
-);
-
-/* -------------------------------------------------------------------------- */
 /* 6. A role that reaches nothing is still visible                             */
 /* -------------------------------------------------------------------------- */
 
@@ -628,6 +615,146 @@ check(
   sanitizeSheetName('x'.repeat(40)).length === 31,
   sanitizeSheetName('x'.repeat(40)).length,
 );
+
+
+/* -------------------------------------------------------------------------- */
+/* 10. The master workbook: every group in one file                            */
+/* -------------------------------------------------------------------------- */
+
+console.log('\nexport: the master workbook covers every group');
+
+{
+  const masterSource = countingSource(new MockResolverSource());
+  const masterRepo = new MatrixRepository(masterSource, 60_000, 6);
+
+  // The plan phase must be able to state the cost before spending it.
+  const planned = await planAllGroupsExport(masterRepo, { maxConcurrency: 6 });
+  check('planning finds every fixture group', planned.plan.groups.length === 3, {
+    groups: planned.plan.groups.length,
+  });
+  check(
+    'a role in two groups is counted once',
+    planned.plan.distinctRoles === 5,
+    planned.plan.distinctRoles,
+  );
+  check(
+    'the remaining cost is pairs plus two per object type',
+    planned.plan.estimatedRemainingCalls ===
+      planned.plan.distinctPairs + planned.plan.distinctObjectTypes * 2,
+    planned.plan,
+  );
+  const afterPlanning = masterSource.total();
+  check(
+    'and planning itself spends no per-pair call',
+    masterSource.counts['statePermissions'] === 0,
+    masterSource.counts,
+  );
+
+  const master = await exportAllGroupsWorkbook(masterRepo, { maxConcurrency: 6 });
+  const masterPath = `${OUT_DIR}/all-groups.xlsx`;
+
+  check(
+    'the sheets are Overview, User Groups, Permissions in that order',
+    master.workbook.worksheets.map((s) => s.name).join('|') ===
+      'Overview|User Groups|Permissions',
+    master.workbook.worksheets.map((s) => s.name),
+  );
+  check(
+    'the fetch phase spent what the plan predicted',
+    masterSource.total() - afterPlanning === planned.plan.estimatedRemainingCalls,
+    { spent: masterSource.total() - afterPlanning, planned: planned.plan.estimatedRemainingCalls },
+  );
+
+  const overview = linesOf(await roundTrip(master.workbook, masterPath, 'Overview'));
+  const overviewText = overview.join('\n');
+  check('the overview is titled', overview[0]?.includes('Resolver permission export') === true);
+  check(
+    'it records when the export was taken',
+    /\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(overviewText),
+  );
+  check(
+    'it describes every other sheet by name',
+    overviewText.includes('User Groups') &&
+      overviewText.includes('Permissions') &&
+      overviewText.includes('One line per user group'),
+  );
+  check(
+    'and carries the blank-is-not-false caveat',
+    overviewText.includes('not the same as FALSE'),
+  );
+
+  const groupsSheet = await roundTrip(master.workbook, masterPath, 'User Groups');
+  const groupRecords = recordsOf(groupsSheet);
+  check('every group has a line', groupRecords.length === 3, groupRecords.length);
+  check(
+    'with the stats asked for',
+    headersOf(groupsSheet).join('|') ===
+      'Group|Group Id|Description|# Members|# Roles|# Object Types Reachable',
+    headersOf(groupsSheet),
+  );
+  const supervisor = groupRecords.find((record) => record['Group'] === GROUP_NAME);
+  check(
+    'and the numbers match the matrix',
+    supervisor?.['Group Id'] === GROUP_ID &&
+      supervisor['# Members'] === 3 &&
+      supervisor['# Roles'] === 3 &&
+      supervisor['# Object Types Reachable'] === 3,
+    supervisor,
+  );
+
+  const permissions = await roundTrip(master.workbook, masterPath, 'Permissions');
+  const permissionRecords = recordsOf(permissions);
+  check(
+    'the permissions sheet uses the same columns as a single-group export',
+    headersOf(permissions).join('|') === EXPECTED_HEADERS.join('|'),
+    headersOf(permissions),
+  );
+  const groupsInSheet = new Set(permissionRecords.map((record) => record['Group']));
+  check('it spans every group, not just one', groupsInSheet.size === 3, [...groupsInSheet]);
+  check(
+    'and a known row survives the wider export',
+    permissionRecords.some(
+      (record) =>
+        record['Group'] === GROUP_NAME &&
+        record['Role'] === 'Incident Owner' &&
+        record['State'] === 'Open' &&
+        record['Access'] === 'edit' &&
+        record['# Triggers Granted'] === 2,
+    ),
+  );
+}
+
+{
+  // One unreadable group must not sink the whole export.
+  const brittle = new MockResolverSource();
+  const realGroupRoles = brittle.fetchGroupRoles.bind(brittle);
+  brittle.fetchGroupRoles = async () => {
+    const roles = await realGroupRoles();
+    // Group 280775 loses its roles entirely, which makes its matrix unbuildable
+    // only if the repository throws; here it simply has none, so instead we
+    // break the group's users to force a failure path in getGroupMatrix.
+    return roles;
+  };
+  const failingRepo = new MatrixRepository(brittle, 60_000, 6);
+  const original = failingRepo.getGroupMatrix.bind(failingRepo);
+  failingRepo.getGroupMatrix = async (groupId: number) => {
+    if (groupId === 280775) throw new ResolverApiError('Upstream 500', 500, '/user/group');
+    return original(groupId);
+  };
+
+  const partial = await exportAllGroupsWorkbook(failingRepo, { maxConcurrency: 6 });
+  check('the other groups still export', partial.plan.groups.length === 2, partial.plan.groups.length);
+  check('the failure is recorded, not swallowed', partial.skipped.length === 1, partial.skipped);
+  const overview = linesOf(
+    await roundTrip(partial.workbook, `${OUT_DIR}/all-groups-partial.xlsx`, 'Overview'),
+  );
+  check(
+    'and named on the overview sheet',
+    overview.some((line) => line.includes('Groups skipped')) &&
+      overview.some((line) => line.includes('Risk & Compliance')),
+    overview.filter((line) => line.toLowerCase().includes('skip')),
+  );
+}
 
 console.log(`\n${failures === 0 ? 'PASS' : `FAIL (${failures})`}`);
 process.exit(failures === 0 ? 0 : 1);

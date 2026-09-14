@@ -1,5 +1,5 @@
 /**
- * The two human-readable sheets: Summary and Members.
+ * The human-readable Summary sheet.
  *
  * The matrix sheet is built for PivotTables, which makes it unreadable at a
  * glance -- 40-odd columns and a row per state. These sheets answer the two
@@ -13,7 +13,6 @@
 import type { Workbook, Worksheet } from 'exceljs';
 import type { GroupMatrix, ObjectTypeAccessDetail } from '../../shared/types/domain.ts';
 import type { MatrixExportRow } from './types.ts';
-import { sanitizeSheetName } from './workbook.ts';
 
 const LABEL_WIDTH = 26;
 const HEADER_FILL = 'FFEDEFF2';
@@ -229,32 +228,6 @@ export function addSummarySheet(
   };
 
   const widths = [30, 11, 30, 17, 17, 16, 16, 18, 12, 15, 16, 34];
-  widths.forEach((width, index) => {
-    sheet.getColumn(index + 1).width = width;
-  });
-
-  return sheet;
-}
-
-/** Adds the Members sheet: who is in the group. */
-export function addMembersSheet(workbook: Workbook, matrix: GroupMatrix): Worksheet {
-  const sheet = workbook.addWorksheet(sanitizeSheetName('Members'));
-  const headers = ['Name', 'Email', 'Active', 'Admin', 'User type', 'Last login'];
-  writeHeaderRow(sheet, headers);
-
-  for (const user of matrix.users) {
-    sheet.addRow([
-      user.fullName,
-      user.email,
-      user.isActive,
-      user.isAdmin,
-      user.userType,
-      user.lastLogin ?? '',
-    ]);
-  }
-
-  sheet.views = [{ state: 'frozen', ySplit: 1 }];
-  const widths = [28, 34, 9, 9, 11, 26];
   widths.forEach((width, index) => {
     sheet.getColumn(index + 1).width = width;
   });
