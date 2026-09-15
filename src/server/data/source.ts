@@ -37,6 +37,16 @@ export interface ResolverDataSource {
     objectTypeId: number,
   ): Promise<ApiRolePermissionRow[]>;
 
+  /**
+   * Every permission row in the org, in one request.
+   *
+   * Verified byte-identical to the per-pair endpoint for a sampled pair --
+   * same states, levels, capability flags, formId and trigger ids -- so it is
+   * a cheaper route to the same data, not a summary of it. Worth ~2,000 calls
+   * on an org-wide export; pointless for a single drill-down.
+   */
+  fetchAllRolePermissions(): Promise<ApiRolePermissionRow[]>;
+
   /** What each state of an object type requires, keyed by state id. */
   fetchStateRequirements(objectTypeId: number): Promise<ApiStateRequiredResponse>;
 

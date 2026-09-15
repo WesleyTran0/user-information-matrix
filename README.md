@@ -86,12 +86,20 @@ The master workbook has three sheets: **Overview** (what each sheet is, and when
 it was taken), **User Groups** (id, description, members, roles, object types
 reachable), and **Permissions** (the same matrix columns, spanning every group).
 
-It is a script rather than a route because the cost scales with the org: one
-call per distinct (role, object type) pair. It runs in two phases and reports
-the cost between them, so `--dry-run` answers "what would this cost?" for the
-price of the cheap calls alone. Measured against a live tenant: 207 groups,
-205 distinct roles, 186 object types, **2,044 pairs** — 210 calls to plan, about
-2,400 to fetch.
+It is a script rather than a route because it walks the whole org and takes
+tens of seconds. It runs in two phases and reports the cost between them, so
+`--dry-run` answers "what would this cost?" for the price of the cheap calls
+alone.
+
+Measured against a live tenant: 207 groups, 205 distinct roles, 186 object
+types, 2,044 (role, object type) pairs — **584 calls, ~22s, 196,860 rows,
+12.6 MB**. The per-pair permissions endpoint would have made that 2,627 calls;
+`/data/rolePermissions` with no parameters returns every row in the org in one
+request, verified identical to the per-pair response for a sampled pair.
+
+Lifecycles a role has no permission in at all are left out (an object type
+commonly owns lifecycles belonging to unrelated processes); the count of
+omitted rows is stated on the Overview sheet.
 
 ## Checks
 

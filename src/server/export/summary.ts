@@ -201,13 +201,18 @@ export function addSummarySheet(
     ]);
   }
 
-  // Roles reaching nothing would otherwise vanish from the summary entirely.
+  // A role contributes no summary line either because it reaches no object
+  // type, or because every lifecycle it could reach was dropped as irrelevant.
+  // Both must still appear, or the role vanishes from the workbook.
+  const rolesWithLines = new Set(summaries.map((entry) => entry.roleName));
   for (const roleAccess of matrix.roles) {
-    if (roleAccess.objectTypes.length > 0) continue;
+    if (rolesWithLines.has(roleAccess.role.name)) continue;
     sheet.addRow([
       roleAccess.role.name,
       roleAccess.role.isGlobal,
-      '(no object types)',
+      roleAccess.objectTypes.length === 0
+        ? '(no object types)'
+        : '(no states this role has permissions in)',
       'none',
       0,
       0,

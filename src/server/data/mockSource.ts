@@ -76,6 +76,10 @@ export class MockResolverSource implements ResolverDataSource {
     return clone(MOCK_OBJECT_TYPE_WORKFLOWS[objectTypeId] ?? {});
   }
 
+  async fetchAllRolePermissions(): Promise<ApiRolePermissionRow[]> {
+    return clone(Object.values(MOCK_ROLE_OBJECT_TYPE_PERMISSIONS).flat());
+  }
+
   async fetchForms(): Promise<ApiForm[]> {
     return clone(MOCK_FORMS);
   }

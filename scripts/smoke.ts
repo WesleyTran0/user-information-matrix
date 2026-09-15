@@ -183,6 +183,9 @@ function sourceOf(parts: {
     async fetchForms(): Promise<ApiForm[]> {
       return [];
     },
+    async fetchAllRolePermissions(): Promise<ApiRolePermissionRow[]> {
+      return [];
+    },
     async fetchRoleLifeCyclePermissions(roleId: number): Promise<ApiRoleLifeCyclePermission[]> {
       if (failRoleIds.has(roleId)) {
         // The real client throws this type; using it keeps the status mapping

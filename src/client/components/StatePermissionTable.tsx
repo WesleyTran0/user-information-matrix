@@ -29,14 +29,28 @@ function verbsFor(state: StateAccess): string[] {
   return verbs;
 }
 
-function CanCell({ state }: { state: StateAccess }) {
+function CanCell({ state, lifeCycleInUse }: { state: StateAccess; lifeCycleInUse: boolean }) {
   const permission = state.permission;
 
   if (permission === null) {
+    // The API omits rows for the odd state even inside a lifecycle the role
+    // clearly uses, and Resolver's own UI shows those states alongside the
+    // rest. So inside a used lifecycle an absent row means no access; only a
+    // wholly unreported lifecycle is genuinely unknown.
+    if (lifeCycleInUse) {
+      return (
+        <span
+          className="perm perm--none"
+          title="The API returned no row for this state; inside a lifecycle this role uses, that means no access."
+        >
+          no access
+        </span>
+      );
+    }
     return (
       <span
         className="perm perm--unreported"
-        aria-label="Not reported: the permissions endpoint returned no row for this state"
+        aria-label="Not reported: the permissions endpoint returned no row for any state of this lifecycle"
       >
         not reported
       </span>
@@ -231,6 +245,10 @@ export function StatePermissionTable({
     );
   }
 
+  // At least one state came back with a permission row, so the role operates
+  // in this lifecycle and gaps in it are denials rather than unknowns.
+  const lifeCycleInUse = lifeCycle.states.some((state) => state.permission !== null);
+
   return (
     <table className="perm-table">
       {/* Named so table navigation can tell several lifecycles apart; the
@@ -254,7 +272,7 @@ export function StatePermissionTable({
               {state.name}
             </th>
             <td>
-              <CanCell state={state} />
+              <CanCell state={state} lifeCycleInUse={lifeCycleInUse} />
             </td>
             <td>
               <FormCell state={state} unavailable={formsUnavailable} />

@@ -37,6 +37,7 @@ import {
   type ReportedPermissions,
 } from '../domain/access.ts';
 import type { ResolverDataSource } from './source.ts';
+import type { ApiRolePermissionRow } from '../types/resolver-api.ts';
 
 /** Raised when a caller asks for something the dataset does not contain. */
 export class NotFoundError extends Error {
@@ -238,6 +239,38 @@ export class MatrixRepository {
    */
   async #formNames(): Promise<Map<number, string>> {
     return this.#formCache.resolve('forms', async () => normalizeForms(await this.#source.fetchForms()));
+  }
+
+  /**
+   * Pre-loads every (role, object type) permission set in one upstream call.
+   *
+   * The per-pair endpoint is the only way to read one pair, but
+   * `/data/rolePermissions` with no parameters returns the same rows for the
+   * whole org at once -- verified byte-identical for a sampled pair, down to
+   * the trigger ids. Priming the per-pair cache from it leaves the drill-down
+   * path untouched (it simply finds everything already cached) while an
+   * org-wide export drops from one call per pair to one call in total.
+   *
+   * Pairs absent from the bulk response are deliberately *not* cached as
+   * empty: that would make "not included in the bulk response" look identical
+   * to "has no permissions". Those fall back to their own per-pair call.
+   */
+  async primeRolePermissionsFromBulk(): Promise<{ rows: number; pairs: number }> {
+    const rows = await this.#source.fetchAllRolePermissions();
+
+    const byPair = new Map<string, ApiRolePermissionRow[]>();
+    for (const row of rows) {
+      const key = `perm:${row.roleId}:${row.objectTypeId}`;
+      const existing = byPair.get(key);
+      if (existing === undefined) byPair.set(key, [row]);
+      else existing.push(row);
+    }
+
+    for (const [key, pairRows] of byPair) {
+      this.#statePermissionCache.set(key, normalizeStatePermissions(pairRows));
+    }
+
+    return { rows: rows.length, pairs: byPair.size };
   }
 
   async listGroups(): Promise<GroupListItem[]> {

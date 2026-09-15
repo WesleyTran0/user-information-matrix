@@ -31,6 +31,8 @@ export const RESOLVER_ENDPOINTS = {
   objectTypeWorkflow: (objectTypeId: number) =>
     `/object/objectType/${objectTypeId}/objectLifeCycle/state?deep=true`,
   forms: '/object/form',
+  /** No parameters: the whole org's permission rows. */
+  allRolePermissions: '/data/rolePermissions',
 } as const;
 
 export class LiveResolverSource implements ResolverDataSource {
@@ -94,6 +96,10 @@ export class LiveResolverSource implements ResolverDataSource {
     return this.#client.getRaw<ApiWorkflowResponse>(
       RESOLVER_ENDPOINTS.objectTypeWorkflow(objectTypeId),
     );
+  }
+
+  fetchAllRolePermissions(): Promise<ApiRolePermissionRow[]> {
+    return this.#client.getData<ApiRolePermissionRow[]>(RESOLVER_ENDPOINTS.allRolePermissions);
   }
 
   fetchForms(): Promise<ApiForm[]> {

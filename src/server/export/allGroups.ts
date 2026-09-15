@@ -40,6 +40,11 @@ export interface AllGroupsExportSource {
   listGroups(): Promise<GroupListItem[]>;
   getGroupMatrix(groupId: GroupId): Promise<GroupMatrix>;
   getObjectTypeDetail(roleId: RoleId, objectTypeId: ObjectTypeId): Promise<ObjectTypeAccessDetail>;
+  /**
+   * Loads every pair's permissions in one call, so the per-pair fan-out costs
+   * nothing. Optional: a source without it still works, just expensively.
+   */
+  primeRolePermissionsFromBulk?: () => Promise<{ rows: number; pairs: number }>;
 }
 
 /** What the plan phase learned, before any per-pair call is made. */
@@ -53,6 +58,11 @@ export interface ExportPlan {
   distinctObjectTypes: number;
   /** Calls the fetch phase will make on a cold cache. */
   estimatedRemainingCalls: number;
+  /**
+   * True when the source can bulk-load permissions, which replaces one call
+   * per pair with one call in total. Reflected in the estimate above.
+   */
+  usesBulkPermissions: boolean;
 }
 
 export interface AllGroupsProgress {
@@ -75,6 +85,9 @@ export interface AllGroupsResult {
   workbook: Workbook;
   plan: ExportPlan;
   rows: MatrixExportRow[];
+  /** Lifecycles left out because no role in scope has any permission in them. */
+  droppedLifeCycles: number;
+  droppedRows: number;
   /** Groups whose matrix could not be loaded at all, with the reason. */
   skipped: { groupId: GroupId; name: string; reason: string }[];
 }
@@ -145,16 +158,21 @@ export async function planAllGroupsExport(
     }
   }
 
+  // Exit requirements and the workflow definition are per object type and
+  // shared across roles; the form catalog is one call for the org. Permissions
+  // are either one call per pair, or one call in total if the source can bulk
+  // load them.
+  const usesBulkPermissions = typeof source.primeRolePermissionsFromBulk === 'function';
+  const permissionCalls = usesBulkPermissions ? 1 : pairs.size;
+
   return {
     plan: {
       groups,
       distinctRoles: roles.size,
       distinctPairs: pairs.size,
       distinctObjectTypes: objectTypes.size,
-      // One permissions call per pair; exit requirements and the workflow
-      // definition are per object type and shared across every role; plus one
-      // org-wide form catalog, fetched once however many pairs there are.
-      estimatedRemainingCalls: pairs.size + objectTypes.size * 2 + 1,
+      estimatedRemainingCalls: permissionCalls + objectTypes.size * 2 + 1,
+      usesBulkPermissions,
     },
     skipped,
   };
@@ -167,20 +185,30 @@ export async function exportAllGroupsWorkbook(
 ): Promise<AllGroupsResult> {
   const { plan, skipped } = await planAllGroupsExport(source, options);
 
+  // One call up front instead of one per pair. The per-pair cache is warm
+  // afterwards, so the row builder below is unchanged.
+  if (source.primeRolePermissionsFromBulk !== undefined) {
+    await source.primeRolePermissionsFromBulk();
+  }
+
   const fetchDetail: ObjectTypeDetailFetcher = (request) =>
     source.getObjectTypeDetail(request.roleId, request.objectTypeId);
 
   const rows: MatrixExportRow[] = [];
   let done = 0;
+  let droppedLifeCycles = 0;
+  let droppedRows = 0;
 
   // Groups are walked in sequence while their pairs fan out in parallel:
   // running whole groups concurrently as well would multiply the in-flight
   // requests past the configured ceiling.
   for (const matrix of plan.groups) {
-    const groupRows = await buildMatrixRows(matrix, fetchDetail, {
+    const built = await buildMatrixRows(matrix, fetchDetail, {
       maxConcurrency: options.maxConcurrency,
     });
-    appendAll(rows, groupRows);
+    droppedLifeCycles += built.droppedLifeCycles;
+    droppedRows += built.droppedRows;
+    appendAll(rows, built.rows);
     done += 1;
     options.onProgress?.({
       phase: 'fetching',
@@ -201,11 +229,11 @@ export async function exportAllGroupsWorkbook(
   assertFitsInSheet(rows.length);
 
   const workbook = createWorkbook();
-  addOverviewSheet(workbook, plan, rows, skipped);
+  addOverviewSheet(workbook, plan, rows, skipped, { droppedLifeCycles, droppedRows });
   addGroupsSheet(workbook, plan);
   addMatrixSheet(workbook, rows, { sheetName: 'Permissions' });
 
-  return { workbook, plan, rows, skipped };
+  return { workbook, plan, rows, skipped, droppedLifeCycles, droppedRows };
 }
 
 /**
@@ -266,6 +294,10 @@ export function addOverviewSheet(
   plan: ExportPlan,
   rows: readonly MatrixExportRow[],
   skipped: AllGroupsResult['skipped'],
+  omitted: { droppedLifeCycles: number; droppedRows: number } = {
+    droppedLifeCycles: 0,
+    droppedRows: 0,
+  },
 ): Worksheet {
   const sheet = workbook.addWorksheet('Overview');
   sheet.getColumn(1).width = 22;
@@ -281,6 +313,14 @@ export function addOverviewSheet(
   sheet.addRow(['Distinct roles', plan.distinctRoles]);
   sheet.addRow(['Distinct object types', plan.distinctObjectTypes]);
   sheet.addRow(['Permission rows', rows.length]);
+  if (omitted.droppedLifeCycles > 0) {
+    sheet.addRow([
+      'Rows omitted',
+      `${omitted.droppedRows} across ${omitted.droppedLifeCycles} lifecycle(s) that no role in ` +
+        `scope has any permission in — an object type often owns lifecycles unrelated to a given ` +
+        `role, and every column for those was "unreported".`,
+    ]);
+  }
 
   // 207 groups against 173 on the Permissions sheet looks like data loss
   // until you know why, so the reconciliation is stated rather than left to

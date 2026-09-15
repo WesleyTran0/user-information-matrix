@@ -144,6 +144,7 @@ function countingSource(inner: ResolverDataSource): CountingSource {
     stateRequirements: 0,
     workflows: 0,
     forms: 0,
+    allPermissions: 0,
   };
   const bump = (key: string): void => {
     counts[key] = (counts[key] ?? 0) + 1;
@@ -188,6 +189,10 @@ function countingSource(inner: ResolverDataSource): CountingSource {
       bump('forms');
       return inner.fetchForms();
     },
+    async fetchAllRolePermissions() {
+      bump('allPermissions');
+      return inner.fetchAllRolePermissions();
+    },
     async fetchObjectTypeWorkflow(objectTypeId: number) {
       bump('workflows');
       return inner.fetchObjectTypeWorkflow(objectTypeId);
@@ -229,7 +234,9 @@ const EXPECTED_HEADERS = [
   'Role',
   'Role Id',
   'Object Type',
+  'Object Type Id',
   'Lifecycle',
+  'Lifecycle Id',
   'State',
   'Access',
   'Can Read',
@@ -264,6 +271,14 @@ check(
   records.every((record) => record['Group Id'] === GROUP_ID && typeof record['Role Id'] === 'number'),
   records[0],
 );
+check(
+  'object type and lifecycle ids are present too, so the sheet can be grouped safely',
+  stateRows(records).every(
+    (record) =>
+      typeof record['Object Type Id'] === 'number' && typeof record['Lifecycle Id'] === 'number',
+  ),
+  stateRows(records)[0],
+);
 check('the sheet has rows at all', stateRows(records).length > 0, records.length);
 check('in-memory rows and written rows agree', records.length === exported.rows.length, {
   written: records.length,
@@ -283,15 +298,23 @@ const open = rowFor('Open');
 const review = rowFor('Review');
 const triage = rowFor('Triage');
 const closed = rowFor('Closed');
-const raised = rowFor('Raised');
+const raised = rowFor('Raised'); // dropped: its lifecycle has no permissions at all
 
 check('an editable state reads "edit"', open?.['Access'] === 'edit', open?.['Access']);
 check('a read-only state reads "read"', review?.['Access'] === 'read', review?.['Access']);
 check('a denied state reads "none"', triage?.['Access'] === 'none', triage?.['Access']);
+// The Incident Escalation lifecycle has no permission rows at all for this
+// role, so it is not part of the role's remit and its states are dropped
+// rather than filling the sheet with "unreported".
 check(
-  'a state with no reported row reads "unreported", not "none"',
-  raised?.['Access'] === 'unreported',
-  raised?.['Access'],
+  'a lifecycle the role has no permissions in is dropped entirely',
+  raised === undefined &&
+    !records.some((record) => record['Lifecycle'] === 'Incident Escalation'),
+  records.filter((record) => record['Lifecycle'] === 'Incident Escalation').length,
+);
+check(
+  'but the lifecycle it does use is kept in full',
+  records.filter((record) => record['Lifecycle'] === 'Incident Workflow').length > 0,
 );
 
 check(
@@ -309,11 +332,7 @@ check(
   typeof open?.['Can Read'] === 'boolean',
   typeof open?.['Can Read'],
 );
-check(
-  'an unreported state leaves them blank rather than FALSE',
-  raised?.['Can Read'] === null && raised['Can Edit'] === null,
-  { read: raised?.['Can Read'], edit: raised?.['Can Edit'] },
-);
+
 
 check(
   'capability flags survive the round trip',
@@ -329,11 +348,7 @@ check(
   closed?.['Can Merge'] === true && open?.['Can Merge'] === false,
   { closed: closed?.['Can Merge'], open: open?.['Can Merge'] },
 );
-check(
-  'capabilities are blank, not FALSE, where nothing was reported',
-  raised?.['Can Create'] === null && raised['Can Manage'] === null,
-  raised,
-);
+
 
 /* -------------------------------------------------------------------------- */
 /* 3. Triggers: granted out of available, by name                              */
@@ -383,11 +398,7 @@ check(
   closed?.['Form'] === 'Form 7999',
   closed?.['Form'],
 );
-check(
-  'a state with no reported permission leaves the cell empty',
-  raised?.['Form'] === null,
-  raised?.['Form'],
-);
+
 
 /* -------------------------------------------------------------------------- */
 /* 4. The Summary sheet: which group, and what each role can do                */
@@ -688,9 +699,15 @@ console.log('\nexport: the master workbook covers every group');
     planned.plan.distinctRoles,
   );
   check(
-    'the remaining cost is pairs, two per object type, plus one form catalog',
-    planned.plan.estimatedRemainingCalls ===
-      planned.plan.distinctPairs + planned.plan.distinctObjectTypes * 2 + 1,
+    'the source can bulk-load permissions, so the plan says so',
+    planned.plan.usesBulkPermissions === true,
+  );
+  // A floor, not an exact figure: pairs the bulk response does not cover fall
+  // back to their own call, and which those are is unknowable until it is
+  // fetched. On live data the bulk response is a superset, so the floor holds.
+  check(
+    'the estimate is 1 bulk call, two per object type, plus one form catalog',
+    planned.plan.estimatedRemainingCalls === 1 + planned.plan.distinctObjectTypes * 2 + 1,
     {
       estimate: planned.plan.estimatedRemainingCalls,
       pairs: planned.plan.distinctPairs,
@@ -714,9 +731,45 @@ console.log('\nexport: the master workbook covers every group');
     master.workbook.worksheets.map((s) => s.name),
   );
   check(
-    'the fetch phase spent what the plan predicted',
-    masterSource.total() - afterPlanning === planned.plan.estimatedRemainingCalls,
-    { spent: masterSource.total() - afterPlanning, planned: planned.plan.estimatedRemainingCalls },
+    'it spent ONE bulk call, not one per pair',
+    masterSource.counts['allPermissions'] === 1,
+    masterSource.counts['allPermissions'],
+  );
+  // The fixtures define permissions for 4 pairs; the export walks 11. The 7
+  // uncovered ones each fall back, which is the safe behaviour: "absent from
+  // the bulk response" must not be read as "has no permissions".
+  check(
+    'pairs the bulk response does not cover fall back individually',
+    masterSource.counts['statePermissions'] === 7,
+    { perPair: masterSource.counts['statePermissions'], pairs: planned.plan.distinctPairs },
+  );
+  check(
+    'so the total is the estimate plus exactly those fallbacks',
+    masterSource.total() - afterPlanning ===
+      planned.plan.estimatedRemainingCalls + masterSource.counts['statePermissions']!,
+    {
+      spent: masterSource.total() - afterPlanning,
+      estimate: planned.plan.estimatedRemainingCalls,
+      fallbacks: masterSource.counts['statePermissions'],
+    },
+  );
+  check(
+    'and far fewer calls than the per-pair route would have taken',
+    masterSource.counts['allPermissions']! + masterSource.counts['statePermissions']! <
+      planned.plan.distinctPairs,
+    { used: masterSource.counts['allPermissions']! + masterSource.counts['statePermissions']!,
+      perPairRoute: planned.plan.distinctPairs },
+  );
+  check(
+    'the rows are identical to what the per-pair path produces',
+    await (async () => {
+      const perPair = new MatrixRepository(new MockResolverSource(), 60_000, 6);
+      const one = await perPair.getObjectTypeDetail(449698, 450001);
+      const bulk = new MatrixRepository(new MockResolverSource(), 60_000, 6);
+      await bulk.primeRolePermissionsFromBulk();
+      const other = await bulk.getObjectTypeDetail(449698, 450001);
+      return JSON.stringify(one) === JSON.stringify(other);
+    })(),
   );
 
   const overview = linesOf(await roundTrip(master.workbook, masterPath, 'Overview'));
@@ -885,6 +938,53 @@ console.log('\nexport: it survives org-scale row counts');
     'one row too many fails with a message naming the limit and the way out',
     message.includes("Excel's limit") && message.includes('--groups'),
     message,
+  );
+}
+
+/* -------------------------------------------------------------------------- */
+/* 12. A gap inside a lifecycle the role *does* use                            */
+/* -------------------------------------------------------------------------- */
+
+console.log('\nexport: a missing row inside a used lifecycle is a denial, not an unknown');
+
+{
+  // Reproduces a case found on live data: object type 442993 returned 5
+  // permission rows for 6 states, with the catalog and workflow endpoints
+  // agreeing on all 6 and no extra rows. Resolver's own UI lists that state
+  // alongside the others, so an absent row inside a used lifecycle means no
+  // access. Here the Review row is withheld from an otherwise complete set.
+  const gapped = new MockResolverSource();
+  const original = gapped.fetchRoleObjectTypePermissions.bind(gapped);
+  gapped.fetchRoleObjectTypePermissions = async (roleId: number, objectTypeId: number) => {
+    const rows = await original(roleId, objectTypeId);
+    return rows.filter((row) => row.objectLifeCycleStateId !== 603174 * 100 + 3);
+  };
+
+  const exportedGap = await exportGroupWorkbook(
+    new MatrixRepository(gapped, 60_000, 6),
+    GROUP_ID,
+    { maxConcurrency: 6 },
+  );
+  const gapRecords = recordsOf(
+    await roundTrip(exportedGap.workbook, `${OUT_DIR}/gap.xlsx`, MATRIX_SHEET),
+  );
+  const reviewRow = gapRecords.find(
+    (record) => record['Role'] === 'Incident Owner' && record['State'] === 'Review',
+  );
+
+  check('the state is still listed', reviewRow !== undefined);
+  check('its access reads "none", not "unreported"', reviewRow?.['Access'] === 'none',
+    reviewRow?.['Access']);
+  check(
+    'and its booleans read FALSE rather than blank',
+    reviewRow?.['Can Read'] === false && reviewRow['Can Edit'] === false &&
+      reviewRow['Can Create'] === false,
+    { read: reviewRow?.['Can Read'], edit: reviewRow?.['Can Edit'] },
+  );
+  check(
+    'the rest of the lifecycle is unaffected',
+    gapRecords.find((r) => r['Role'] === 'Incident Owner' && r['State'] === 'Open')?.['Access'] ===
+      'edit',
   );
 }
 

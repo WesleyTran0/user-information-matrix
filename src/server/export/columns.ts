@@ -26,6 +26,14 @@
 import type { ExportColumn, MatrixExportRow } from './types.ts';
 
 /**
+ * Whether this row's lifecycle is one the role actually operates in -- i.e.
+ * at least one of its states came back with a permission row.
+ */
+function lifeCycleIsInUse(row: MatrixExportRow): boolean {
+  return row.lifeCycle?.states.some((state) => state.permission !== null) === true;
+}
+
+/**
  * Trigger names for one side of the granted/not-granted split.
  *
  * Null rather than an empty string when the state itself is absent, so an
@@ -62,7 +70,16 @@ function reportedAccess(row: MatrixExportRow): string | null {
   const permission = row.state.permission;
   if (permission === null) {
     if (row.objectType?.permissionsError != null) return 'unavailable';
-    return 'unreported';
+    // The API omits rows for some states even inside a lifecycle the role
+    // clearly uses -- verified on object type 442993, where 5 rows came back
+    // for 6 states with no extra rows and the catalog and workflow endpoints
+    // agreeing on all 6. The Resolver UI shows that state alongside the rest,
+    // so a missing row inside a *used* lifecycle means no access, not unknown.
+    //
+    // 'unreported' is kept only for the case where the whole lifecycle has
+    // nothing reported, which the row builder now drops anyway; it survives as
+    // a backstop rather than a value anyone should see.
+    return lifeCycleIsInUse(row) ? 'none' : 'unreported';
   }
 
   switch (permission.level) {
@@ -87,7 +104,9 @@ function reportedAccess(row: MatrixExportRow): string | null {
  */
 function canAccess(row: MatrixExportRow, level: 'read' | 'edit'): boolean | null {
   const permission = row.state?.permission;
-  if (permission == null) return null;
+  // Same reasoning as `reportedAccess`: inside a lifecycle the role uses, an
+  // absent row is a denial, so FALSE is the honest cell rather than blank.
+  if (permission == null) return lifeCycleIsInUse(row) ? false : null;
   if (permission.level === 'unknown') return null;
   if (level === 'read') return permission.level === 'read' || permission.level === 'read-write';
   return permission.level === 'read-write';
@@ -99,7 +118,7 @@ function capability(
   key: 'canCreate' | 'canDelete' | 'canMerge' | 'canManageRole' | 'canBulkLaunch',
 ): boolean | null {
   const permission = row.state?.permission;
-  if (permission == null) return null;
+  if (permission == null) return lifeCycleIsInUse(row) ? false : null;
   return permission.capabilities[key];
 }
 
@@ -118,11 +137,26 @@ export const MATRIX_COLUMNS: readonly ExportColumn[] = [
     width: 30,
     value: (row) => row.objectType?.name ?? null,
   },
+  // Object type and lifecycle names collide too -- one lifecycle name is used
+  // by several object types, and analysing this sheet by name merges them.
+  // Same reason Group Id is here.
+  {
+    header: 'Object Type Id',
+    key: 'objectTypeId',
+    width: 14,
+    value: (row) => row.objectType?.objectTypeId ?? null,
+  },
   {
     header: 'Lifecycle',
     key: 'lifeCycle',
     width: 28,
     value: (row) => row.lifeCycle?.name ?? null,
+  },
+  {
+    header: 'Lifecycle Id',
+    key: 'lifeCycleId',
+    width: 13,
+    value: (row) => row.lifeCycle?.lifeCycleId ?? null,
   },
   { header: 'State', key: 'state', width: 26, value: (row) => row.state?.name ?? null },
 

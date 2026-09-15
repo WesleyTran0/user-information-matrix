@@ -74,9 +74,10 @@ export async function exportGroupWorkbook(
   const fetchDetail: ObjectTypeDetailFetcher = (request) =>
     source.getObjectTypeDetail(request.roleId, request.objectTypeId);
 
-  const rows = await buildMatrixRows(matrix, fetchDetail, {
+  const built = await buildMatrixRows(matrix, fetchDetail, {
     maxConcurrency: options.maxConcurrency,
   });
+  const rows = built.rows;
 
   // Order matters: exceljs appends, and Excel opens on the first sheet. The
   // matrix is the pivot source, not what someone opening the file wants to

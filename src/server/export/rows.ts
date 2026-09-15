@@ -58,11 +58,20 @@ interface DetailOutcome {
   error: string | null;
 }
 
+/** Rows, plus what was left out and why, so the omission can be disclosed. */
+export interface BuiltRows {
+  rows: MatrixExportRow[];
+  /** Lifecycles skipped because the role has no reported permission in any state. */
+  droppedLifeCycles: number;
+  /** Rows those lifecycles would have contributed. */
+  droppedRows: number;
+}
+
 export async function buildMatrixRows(
   matrix: GroupMatrix,
   fetchDetail: ObjectTypeDetailFetcher,
   options: BuildRowsOptions,
-): Promise<MatrixExportRow[]> {
+): Promise<BuiltRows> {
   // Pairs are unique within a group: a role appears once, and its object types
   // are already deduped by `buildRoleAccess`.
   const requests: ObjectTypeDetailRequest[] = [];
@@ -101,6 +110,8 @@ export async function buildMatrixRows(
   // name, granted lifecycles first) and is stable across runs.
   const rows: MatrixExportRow[] = [];
   const group = matrix.group;
+  let droppedLifeCycles = 0;
+  let droppedRows = 0;
 
   for (const roleAccess of matrix.roles) {
     const role = roleAccess.role;
@@ -148,6 +159,30 @@ export async function buildMatrixRows(
       }
 
       for (const lifeCycle of detail.lifeCycles) {
+        // An object type often owns lifecycles that have nothing to do with a
+        // given role -- Resolver reports no permission row for any of their
+        // states. Those rows carried no information (every column "unreported")
+        // and drowned the sheet: 97,142 of 288,199 rows on a full export. They
+        // are dropped, and counted so the removal is visible on the Overview
+        // sheet rather than silent.
+        //
+        // Deliberately *not* dropped: an individual unreported state inside a
+        // lifecycle that is otherwise reported. That is a real gap -- usually a
+        // state added to the workflow after the role's permissions were set --
+        // and hiding it would lose the one case worth noticing.
+        if (
+          lifeCycle.states.length > 0 &&
+          // Only when the call *succeeded* and simply had nothing for this
+          // lifecycle. If it failed, nothing is known, and dropping the rows
+          // would turn an outage into a confident "not relevant".
+          detail.permissionsError === null &&
+          lifeCycle.states.every((state) => state.permission === null)
+        ) {
+          droppedLifeCycles += 1;
+          droppedRows += lifeCycle.states.length;
+          continue;
+        }
+
         if (lifeCycle.states.length === 0) {
           // Emit the lifecycle anyway: a granted lifecycle with no states is a
           // catalog gap, and dropping the row would hide the grant entirely.
@@ -204,5 +239,5 @@ export async function buildMatrixRows(
     }
   }
 
-  return rows;
+  return { rows, droppedLifeCycles, droppedRows };
 }

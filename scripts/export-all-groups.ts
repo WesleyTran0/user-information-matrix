@@ -13,6 +13,12 @@
  * It runs in two phases and reports the cost between them, so `--dry-run`
  * answers "what would this cost?" for the price of the cheap calls alone.
  * Nothing is written until the fetch phase completes.
+ *
+ * Memory: exceljs holds the entire workbook in memory while writing, so peak
+ * usage tracks the row count. It ran under Node's ~4 GB default once
+ * lifecycles a role has no permissions in stopped being emitted (roughly a
+ * third of the rows). If the row count grows a long way past this, the fix is
+ * exceljs's streaming `WorkbookWriter`, not a bigger heap.
  */
 import { mkdir } from 'node:fs/promises';
 import { dirname } from 'node:path';
@@ -165,9 +171,13 @@ await mkdir(dirname(args.out), { recursive: true });
 await writeWorkbookFile(result.workbook, args.out);
 
 const seconds = Math.round((Date.now() - started) / 100) / 10;
+// Peak resident memory, reported because exceljs holds the whole workbook in
+// memory: this is the number that decides whether the default heap suffices.
+const peakMb = Math.round(process.resourceUsage().maxRSS / 1024);
 console.log(`
   wrote                  ${args.out}
   sheets                 ${result.workbook.worksheets.map((sheet) => sheet.name).join(', ')}
   permission rows        ${result.rows.length}
   upstream calls         ${source.callCount}
-  elapsed                ${seconds}s`);
+  elapsed                ${seconds}s
+  peak memory            ${peakMb} MB`);
