@@ -266,3 +266,19 @@ export type ApiWorkflowResponse = Record<
     transitions: ApiWorkflowTransition[];
   }
 >;
+
+/**
+ * GET /object/form
+ *
+ * The org's form definitions, enveloped. Only needed to turn the `formId` on a
+ * role-permission row into a name -- one call resolves every form everywhere,
+ * so it is fetched once and cached rather than looked up per id.
+ */
+export interface ApiForm {
+  id: number;
+  name: string;
+  description: string | null;
+  type: number;
+  objectTypeId: number | null;
+  externalRefId: string;
+}

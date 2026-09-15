@@ -149,6 +149,39 @@ function TriggerCell({ state, incomplete }: { state: StateAccess; incomplete: bo
   );
 }
 
+/**
+ * The form this role sees in this state.
+ *
+ * "Default" is a real choice in the Resolver UI, not missing data, so it is
+ * shown as such. What the default resolves to is not exposed by any endpoint,
+ * which is why this does not try to name it.
+ */
+function FormCell({ state, unavailable }: { state: StateAccess; unavailable: boolean }) {
+  if (state.permission === null) return <span className="muted">—</span>;
+
+  const form = state.form;
+  if (form === null) {
+    return (
+      <span className="form form--default" title="This state uses the object type's default form">
+        Default
+      </span>
+    );
+  }
+  if (form.name !== null) return <span className="form">{form.name}</span>;
+  return (
+    <span
+      className="form form--unresolved"
+      title={
+        unavailable
+          ? 'The form catalog could not be loaded, so only the id is known'
+          : 'This form id is not in the form catalog'
+      }
+    >
+      Form {form.id}
+    </span>
+  );
+}
+
 function RequirementCell({
   state,
   unavailable,
@@ -183,10 +216,12 @@ export function StatePermissionTable({
   lifeCycle,
   requirementsUnavailable = false,
   triggersUnavailable = false,
+  formsUnavailable = false,
 }: {
   lifeCycle: LifeCycleAccess;
   requirementsUnavailable?: boolean;
   triggersUnavailable?: boolean;
+  formsUnavailable?: boolean;
 }) {
   if (lifeCycle.states.length === 0) {
     return (
@@ -207,6 +242,7 @@ export function StatePermissionTable({
         <tr>
           <th scope="col">State</th>
           <th scope="col">Can</th>
+          <th scope="col">Form</th>
           <th scope="col">Triggers</th>
           <th scope="col">Requires to exit</th>
         </tr>
@@ -219,6 +255,9 @@ export function StatePermissionTable({
             </th>
             <td>
               <CanCell state={state} />
+            </td>
+            <td>
+              <FormCell state={state} unavailable={formsUnavailable} />
             </td>
             <td>
               <TriggerCell state={state} incomplete={triggersUnavailable} />

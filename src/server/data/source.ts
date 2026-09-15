@@ -1,4 +1,5 @@
 import type {
+  ApiForm,
   ApiGroupRole,
   ApiKeyedByGroupId,
   ApiObjectLifeCycle,
@@ -41,4 +42,7 @@ export interface ResolverDataSource {
 
   /** States, trigger definitions and transitions for an object type. */
   fetchObjectTypeWorkflow(objectTypeId: number): Promise<ApiWorkflowResponse>;
+
+  /** Every form in the org, for resolving a permission row's formId to a name. */
+  fetchForms(): Promise<ApiForm[]>;
 }

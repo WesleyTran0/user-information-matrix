@@ -1,6 +1,7 @@
 import type {
   ApiGroupRole,
   ApiObjectLifeCycle,
+  ApiForm,
   ApiRolePermissionRow,
   ApiStateRequiredRow,
   ApiWorkflowResponse,
@@ -381,4 +382,20 @@ export function normalizeWorkflowTriggers(
   }
 
   return byStateId;
+}
+
+/**
+ * Form id -> name, for resolving the form a role sees in a given state.
+ *
+ * One entry per form in the org. Names are trimmed but otherwise untouched;
+ * they are operator-authored and carry meaning in their prefixes
+ * ("1.3 - Action - GRC - Team Lead").
+ */
+export function normalizeForms(rows: readonly ApiForm[]): Map<number, string> {
+  const byId = new Map<number, string>();
+  for (const row of rows) {
+    const name = row.name.trim();
+    if (name !== '') byId.set(row.id, name);
+  }
+  return byId;
 }

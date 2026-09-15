@@ -23,6 +23,7 @@ import {
   buildCatalog,
   normalizeRole,
   normalizeStatePermissions,
+  normalizeForms,
   normalizeStateRequirements,
   normalizeUser,
   normalizeWorkflowTriggers,
@@ -78,6 +79,7 @@ export class MatrixRepository {
   readonly #statePermissionCache: TtlCache<NormalizedStatePermissions>;
   readonly #requirementsCache: TtlCache<Map<LifeCycleStateId, StateRequirements>>;
   readonly #workflowCache: TtlCache<Map<LifeCycleStateId, StateTrigger[]>>;
+  readonly #formCache: TtlCache<Map<number, string>>;
   readonly #maxConcurrency: number;
   #catalogLoadedAt: string | null = null;
   #statesAvailable: boolean | null = null;
@@ -90,6 +92,7 @@ export class MatrixRepository {
     this.#statePermissionCache = new TtlCache<NormalizedStatePermissions>(cacheTtlMs);
     this.#requirementsCache = new TtlCache<Map<LifeCycleStateId, StateRequirements>>(cacheTtlMs);
     this.#workflowCache = new TtlCache<Map<LifeCycleStateId, StateTrigger[]>>(cacheTtlMs);
+    this.#formCache = new TtlCache<Map<number, string>>(cacheTtlMs);
     this.#maxConcurrency = maxConcurrency;
   }
 
@@ -103,6 +106,7 @@ export class MatrixRepository {
       cachedStatePermissionCount: this.#statePermissionCache.size,
       cachedRequirementCount: this.#requirementsCache.size,
       cachedWorkflowCount: this.#workflowCache.size,
+      cachedFormCatalog: this.#formCache.size > 0,
     };
   }
 
@@ -113,6 +117,7 @@ export class MatrixRepository {
     this.#statePermissionCache.clear();
     this.#requirementsCache.clear();
     this.#workflowCache.clear();
+    this.#formCache.clear();
     this.#catalogLoadedAt = null;
     this.#statesAvailable = null;
   }
@@ -223,6 +228,18 @@ export class MatrixRepository {
     });
   }
 
+  /**
+   * Form id -> name for the whole org.
+   *
+   * 1 upstream call, ever, per cache window -- shared by every role, object
+   * type and state. Fetched from the drill-down path rather than with the
+   * catalog so the group view's budget stays at 5 calls for callers that
+   * never open a row.
+   */
+  async #formNames(): Promise<Map<number, string>> {
+    return this.#formCache.resolve('forms', async () => normalizeForms(await this.#source.fetchForms()));
+  }
+
   async listGroups(): Promise<GroupListItem[]> {
     const bundle = await this.#groupBundle();
     return bundle.groups.map((group) => ({
@@ -309,7 +326,7 @@ export class MatrixRepository {
       throw new NotFoundError(`Object type ${objectTypeId} was not found`);
     }
 
-    const [grants, permissions, requirements, workflow] = await Promise.all([
+    const [grants, permissions, requirements, workflow, forms] = await Promise.all([
       this.#roleGrants(roleId),
       this.#statePermissions(roleId, objectTypeId).then(
         (value) => ({ value, error: null as string | null }),
@@ -341,18 +358,29 @@ export class MatrixRepository {
           error: cause instanceof Error ? cause.message : String(cause),
         }),
       ),
+      // Recorded rather than swallowed: without it a pinned form shows only
+      // an id, which must not be mistaken for the default.
+      this.#formNames().then(
+        (value) => ({ value, error: null as string | null }),
+        (cause: unknown) => ({
+          value: new Map<number, string>(),
+          error: cause instanceof Error ? cause.message : String(cause),
+        }),
+      ),
     ]);
 
     const reported: ReportedPermissions = {
       byStateId: permissions.value.byStateId,
       requirementsByStateId: requirements.value,
       triggersByStateId: workflow.value,
+      formNameById: forms.value,
       rowCount: permissions.value.rowCount,
       lifeCycleIdByStateId: permissions.value.lifeCycleIdByStateId,
       duplicateCount: permissions.value.duplicateCount,
       error: permissions.error,
       requirementsError: requirements.error,
       triggersError: workflow.error,
+      formsError: forms.error,
     };
 
     const detail = buildObjectTypeAccessDetail(index, grants, objectTypeId, reported);

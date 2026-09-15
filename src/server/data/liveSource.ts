@@ -1,4 +1,5 @@
 import type {
+  ApiForm,
   ApiGroupRole,
   ApiKeyedByGroupId,
   ApiObjectLifeCycle,
@@ -29,6 +30,7 @@ export const RESOLVER_ENDPOINTS = {
     `/object/objectType/${objectTypeId}/objectLifeCycle/stateRequired`,
   objectTypeWorkflow: (objectTypeId: number) =>
     `/object/objectType/${objectTypeId}/objectLifeCycle/state?deep=true`,
+  forms: '/object/form',
 } as const;
 
 export class LiveResolverSource implements ResolverDataSource {
@@ -92,5 +94,9 @@ export class LiveResolverSource implements ResolverDataSource {
     return this.#client.getRaw<ApiWorkflowResponse>(
       RESOLVER_ENDPOINTS.objectTypeWorkflow(objectTypeId),
     );
+  }
+
+  fetchForms(): Promise<ApiForm[]> {
+    return this.#client.getData<ApiForm[]>(RESOLVER_ENDPOINTS.forms);
   }
 }

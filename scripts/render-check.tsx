@@ -109,6 +109,19 @@ const detailHtml = text(renderToString(<ObjectTypeDetailView detail={detail} />)
 expect('granted lifecycle is labelled', detailHtml.includes('Lifecycle granted'));
 expect('non-granted lifecycle is labelled', detailHtml.includes('Lifecycle not granted'));
 expect('the per-state table renders', detailHtml.includes('perm-table'));
+expect('the table has a Form column', detailHtml.includes('>Form<'));
+expect(
+  'a pinned form is named',
+  detailHtml.includes('1.3 - Incident - Owner View'),
+);
+expect(
+  'a state on the default form says Default rather than looking blank',
+  detailHtml.includes('form--default') && detailHtml.includes('>Default<'),
+);
+expect(
+  'a pinned form missing from the catalog falls back to its id',
+  detailHtml.includes('form--unresolved') && detailHtml.includes('Form 7999'),
+);
 expect(
   'every state of both lifecycles is present',
   ['Triage', 'Open', 'Investigation', 'Review', 'Closed', 'Raised', 'Escalated', 'Resolved'].every(

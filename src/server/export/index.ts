@@ -14,9 +14,10 @@
  * object type's state requirements, the latter shared across every role. So for
  * R roles reaching T object types between them, with P distinct pairs:
  *
- *   5 + R + P + 2T  calls cold, and 0 on a warm cache. The 2T is per object
- *                   type: its exit requirements and its workflow definition,
- *                   both shared across roles.
+ *   5 + R + P + 2T + 1  calls cold, and 0 on a warm cache. The 2T is per
+ *                       object type -- its exit requirements and its workflow
+ *                       definition, both shared across roles -- and the +1 is
+ *                       the org-wide form catalog, fetched once in total.
  *
  * P is the term that bites: it is bounded by R x T, not by R + T. A measured
  * live group (9 roles, 41 object types) came to ~350 pairs, so the fan-out runs

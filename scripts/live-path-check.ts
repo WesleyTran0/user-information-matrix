@@ -143,11 +143,22 @@ async function startUpstream(): Promise<Upstream> {
         { id: 1, permission: 0, canBulkLaunch: false, canCreate: false, canDelete: false,
           canMerge: false, canManageRole: false, roleId, objectTypeId, objectLifeCycleId: 55,
           objectLifeCycleStateId: 1, formId: null, org: 1, externalRefId: 'rp1', assigned: false },
+        // formId set on this row only, so both the resolved-name and the
+        // default path are exercised.
         { id: 2, permission: 2, canBulkLaunch: false, canCreate: true, canDelete: false,
           canMerge: false, canManageRole: true, roleId, objectTypeId, objectLifeCycleId: 55,
-          objectLifeCycleStateId: 2, formId: null, org: 1, externalRefId: 'rp2', assigned: false,
+          objectLifeCycleStateId: 2, formId: 9100, org: 1, externalRefId: 'rp2', assigned: false,
           triggers: [{ id: 9, rolePermissionId: 2, triggerId: 4242, objectLifeCycleId: 55,
             org: 1, externalRefId: 'trg1' }] },
+      ]);
+      return;
+    }
+
+    // The org-wide form catalog: one call resolves every form id.
+    if (url.pathname === '/object/form') {
+      send([
+        { id: 9100, name: 'Case - Reviewer View', description: null, type: 1,
+          objectTypeId: 9, externalRefId: 'f9100' },
       ]);
       return;
     }
@@ -318,11 +329,12 @@ try {
         upstream.seen.some((entry) => entry.path === '/object/objectLifeCycle?includeStates=true'));
 
       // The drill-down fetches the reported per-state permissions (per role +
-      // object type) plus the object type's exit requirements and workflow
-      // definition (both shared across roles): 3 calls cold, 0 warm.
+      // object type), the object type's exit requirements and workflow
+      // definition (both shared across roles), and the org-wide form catalog
+      // (once, ever): 4 calls cold, 0 warm.
       const drill = (await getJson(`${app.baseUrl}/api/roles/77/object-types/9`)).body;
       const afterDrill = (await getJson(`${app.baseUrl}/api/meta`)).body;
-      check('drill-down costs 3 upstream calls cold', afterDrill.upstreamCallCount === 10,
+      check('drill-down costs 4 upstream calls cold', afterDrill.upstreamCallCount === 11,
         afterDrill.upstreamCallCount);
 
       check('reported access levels survive the live client',
@@ -343,13 +355,19 @@ try {
         states.some((state: any) => state.permission?.capabilities?.canManageRole === true &&
           state.permission?.triggerIds?.length === 1),
         states.map((state: any) => state.permission));
+      check('the pinned form is resolved to its name',
+        states.some((state: any) => state.form?.name === 'Case - Reviewer View'),
+        states.map((state: any) => state.form));
+      check('and a state without one reports the default, not a name',
+        states.some((state: any) => state.permission !== null && state.form === null),
+        states.map((state: any) => ({ p: state.permission !== null, f: state.form })));
       check('exit requirements attach to the right state',
         states.some((state: any) => state.requirements?.fieldCount === 1),
         states.map((state: any) => state.requirements));
 
       await getJson(`${app.baseUrl}/api/roles/77/object-types/9`);
       const afterSecond = (await getJson(`${app.baseUrl}/api/meta`)).body;
-      check('reopening the same drill-down is free', afterSecond.upstreamCallCount === 10,
+      check('reopening the same drill-down is free', afterSecond.upstreamCallCount === 11,
         afterSecond.upstreamCallCount);
 
       // A second role on the same object type must reuse the shared exit
@@ -363,18 +381,22 @@ try {
         entry.path.includes('/stateRequired')).length;
       const workflowCalls = upstream.seen.filter((entry) =>
         entry.path.includes('/objectLifeCycle/state?deep=true')).length;
-      check('a second role on the same object type costs 1 call, not 3',
-        afterOtherRole.upstreamCallCount === 11, afterOtherRole.upstreamCallCount);
-      check('because requirements and the workflow are shared across roles',
-        requirementCallsBefore === 1 && requirementCallsAfter === 1 && workflowCalls === 1,
-        { requirementCallsBefore, requirementCallsAfter, workflowCalls });
-      check('and all three new caches are visible in meta',
+      check('a second role on the same object type costs 1 call, not 4',
+        afterOtherRole.upstreamCallCount === 12, afterOtherRole.upstreamCallCount);
+      const formCalls = upstream.seen.filter((entry) => entry.path === '/object/form').length;
+      check('because requirements, workflow and forms are all shared',
+        requirementCallsBefore === 1 && requirementCallsAfter === 1 && workflowCalls === 1 &&
+          formCalls === 1,
+        { requirementCallsBefore, requirementCallsAfter, workflowCalls, formCalls });
+      check('and every cache is visible in meta',
         afterOtherRole.cachedStatePermissionCount === 2 &&
           afterOtherRole.cachedRequirementCount === 1 &&
-          afterOtherRole.cachedWorkflowCount === 1,
+          afterOtherRole.cachedWorkflowCount === 1 &&
+          afterOtherRole.cachedFormCatalog === true,
         { perms: afterOtherRole.cachedStatePermissionCount,
           reqs: afterOtherRole.cachedRequirementCount,
-          wf: afterOtherRole.cachedWorkflowCount });
+          wf: afterOtherRole.cachedWorkflowCount,
+          forms: afterOtherRole.cachedFormCatalog });
     } finally {
       stopApp(app);
     }

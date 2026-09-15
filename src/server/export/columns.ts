@@ -172,4 +172,18 @@ export const MATRIX_COLUMNS: readonly ExportColumn[] = [
     // factor nobody asked to pivot on.
     value: (row) => joinTriggerNames(row, true),
   },
+  {
+    // Appended rather than inserted, so the agreed left-to-right order of the
+    // other columns is untouched. "Default" is a real selection in the
+    // Resolver UI, not missing data.
+    header: 'Form',
+    key: 'form',
+    width: 38,
+    value: (row) => {
+      if (row.state === null || row.state.permission === null) return null;
+      const form = row.state.form;
+      if (form === null) return 'Default';
+      return form.name ?? `Form ${form.id}`;
+    },
+  },
 ];

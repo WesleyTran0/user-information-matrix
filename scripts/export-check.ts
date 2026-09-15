@@ -143,6 +143,7 @@ function countingSource(inner: ResolverDataSource): CountingSource {
     statePermissions: 0,
     stateRequirements: 0,
     workflows: 0,
+    forms: 0,
   };
   const bump = (key: string): void => {
     counts[key] = (counts[key] ?? 0) + 1;
@@ -182,6 +183,10 @@ function countingSource(inner: ResolverDataSource): CountingSource {
     async fetchRoleObjectTypePermissions(roleId: number, objectTypeId: number) {
       bump('statePermissions');
       return inner.fetchRoleObjectTypePermissions(roleId, objectTypeId);
+    },
+    async fetchForms() {
+      bump('forms');
+      return inner.fetchForms();
     },
     async fetchObjectTypeWorkflow(objectTypeId: number) {
       bump('workflows');
@@ -237,6 +242,7 @@ const EXPECTED_HEADERS = [
   '# Triggers Granted',
   '# Triggers Available',
   'Triggers Granted',
+  'Form',
 ];
 
 check(
@@ -354,6 +360,33 @@ check(
   'a state with no triggers at all reports 0 available',
   closed?.['# Triggers Available'] === 0,
   closed?.['# Triggers Available'],
+);
+
+/* -------------------------------------------------------------------------- */
+/* 3b. The form a role sees for a state                                        */
+/* -------------------------------------------------------------------------- */
+
+console.log('\nexport: the form column names the form, or says Default');
+
+check(
+  'a state pinning a form shows its name',
+  open?.['Form'] === '1.3 - Incident - Owner View',
+  open?.['Form'],
+);
+check(
+  'a state using the default says so, rather than looking empty',
+  triage?.['Form'] === 'Default',
+  triage?.['Form'],
+);
+check(
+  'a pinned form absent from the catalog falls back to its id',
+  closed?.['Form'] === 'Form 7999',
+  closed?.['Form'],
+);
+check(
+  'a state with no reported permission leaves the cell empty',
+  raised?.['Form'] === null,
+  raised?.['Form'],
 );
 
 /* -------------------------------------------------------------------------- */
@@ -572,9 +605,14 @@ console.log('\nexport: failures are stated, not rendered as absence');
 
 console.log('\nexport: the call budget is what the docs claim');
 
-check('a cold one-group export costs 19 upstream calls', source.total() === 19, source.counts);
+check('a cold one-group export costs 20 upstream calls', source.total() === 20, source.counts);
 check(
-  'made up of 5 collection/catalog, 3 roles, 5 pairs, and 3 + 3 per object type',
+  'the form catalog is fetched once for the whole org, not per pair',
+  source.counts['forms'] === 1,
+  source.counts['forms'],
+);
+check(
+  'made up of 5 collection/catalog, 3 roles, 5 pairs, 3 + 3 per object type, 1 form catalog',
   source.counts['userGroups'] === 1 &&
     source.counts['objectTypes'] === 1 &&
     source.counts['roleGrants'] === 3 &&
@@ -650,10 +688,14 @@ console.log('\nexport: the master workbook covers every group');
     planned.plan.distinctRoles,
   );
   check(
-    'the remaining cost is pairs plus two per object type',
+    'the remaining cost is pairs, two per object type, plus one form catalog',
     planned.plan.estimatedRemainingCalls ===
-      planned.plan.distinctPairs + planned.plan.distinctObjectTypes * 2,
-    planned.plan,
+      planned.plan.distinctPairs + planned.plan.distinctObjectTypes * 2 + 1,
+    {
+      estimate: planned.plan.estimatedRemainingCalls,
+      pairs: planned.plan.distinctPairs,
+      objectTypes: planned.plan.distinctObjectTypes,
+    },
   );
   const afterPlanning = masterSource.total();
   check(

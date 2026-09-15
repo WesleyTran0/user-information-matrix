@@ -14,10 +14,12 @@ function LifeCycleRow({
   lifeCycle,
   requirementsUnavailable,
   triggersUnavailable,
+  formsUnavailable,
 }: {
   lifeCycle: LifeCycleAccess;
   requirementsUnavailable: boolean;
   triggersUnavailable: boolean;
+  formsUnavailable: boolean;
 }) {
   return (
     <li className={`lifecycle ${lifeCycle.granted ? '' : 'lifecycle--denied'}`}>
@@ -34,6 +36,7 @@ function LifeCycleRow({
         lifeCycle={lifeCycle}
         requirementsUnavailable={requirementsUnavailable}
         triggersUnavailable={triggersUnavailable}
+        formsUnavailable={formsUnavailable}
       />
     </li>
   );
@@ -119,6 +122,13 @@ export function ObjectTypeDetailView({ detail }: { detail: ObjectTypeAccessDetai
         </p>
       )}
 
+      {detail.formsError !== null && (
+        <p className="warning">
+          The form catalog could not be loaded, so states that pin a specific form show only its
+          id. States using the default are unaffected. ({detail.formsError})
+        </p>
+      )}
+
       {detail.requirementsError !== null && (
         <p className="warning">
           Exit requirements could not be loaded, so the last column is unknown rather than empty.
@@ -142,6 +152,7 @@ export function ObjectTypeDetailView({ detail }: { detail: ObjectTypeAccessDetai
             lifeCycle={lifeCycle}
             requirementsUnavailable={detail.requirementsError !== null}
             triggersUnavailable={detail.triggersError !== null}
+            formsUnavailable={detail.formsError !== null}
           />
         ))}
       </ul>

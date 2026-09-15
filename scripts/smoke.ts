@@ -18,6 +18,7 @@ import type {
   ApiObjectType,
   ApiRoleLifeCyclePermission,
   ApiRolePermissionRow,
+  ApiForm,
   ApiStateRequiredResponse,
   ApiUser,
   ApiUserGroup,
@@ -178,6 +179,9 @@ function sourceOf(parts: {
     },
     async fetchObjectTypeWorkflow(): Promise<ApiWorkflowResponse> {
       return {};
+    },
+    async fetchForms(): Promise<ApiForm[]> {
+      return [];
     },
     async fetchRoleLifeCyclePermissions(roleId: number): Promise<ApiRoleLifeCyclePermission[]> {
       if (failRoleIds.has(roleId)) {

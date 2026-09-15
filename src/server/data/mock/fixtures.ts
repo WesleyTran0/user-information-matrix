@@ -17,6 +17,7 @@ import type {
   ApiKeyedByGroupId,
   ApiObjectLifeCycle,
   ApiObjectType,
+  ApiForm,
   ApiRoleLifeCyclePermission,
   ApiRolePermissionRow,
   ApiStateRequiredRow,
@@ -399,6 +400,7 @@ function permissionRow(
     >
   > = {},
   triggerIds: number[] = [],
+  formId: number | null = null,
 ): ApiRolePermissionRow {
   const stateId = lifeCycleId * 100 + ordinal;
   const row: ApiRolePermissionRow = {
@@ -413,7 +415,7 @@ function permissionRow(
     objectTypeId,
     objectLifeCycleId: lifeCycleId,
     objectLifeCycleStateId: stateId,
-    formId: null,
+    formId,
     org: ORG,
     externalRefId: `rp-${roleId}-${stateId}`,
     assigned: false,
@@ -437,10 +439,11 @@ export const MOCK_ROLE_OBJECT_TYPE_PERMISSIONS: Record<string, ApiRolePermission
   // uniformly across its states, and nothing at all on the escalation one.
   '449698:450001': [
     permissionRow(449698, 450001, 603174, 0, 0),
-    permissionRow(449698, 450001, 603174, 1, 2, { canCreate: true, canManageRole: true }, [9003, 9005]),
+    permissionRow(449698, 450001, 603174, 1, 2, { canCreate: true, canManageRole: true }, [9003, 9005], 7001),
     permissionRow(449698, 450001, 603174, 2, 2, { canManageRole: true }, [9007]),
     permissionRow(449698, 450001, 603174, 3, 1),
-    permissionRow(449698, 450001, 603174, 4, 1, { canMerge: true }),
+    // Points at a form id absent from /object/form.
+    permissionRow(449698, 450001, 603174, 4, 1, { canMerge: true }, [], 7999),
   ],
   '449698:450002': [
     permissionRow(449698, 450002, 992693, 0, 2, { canCreate: true }),
@@ -553,3 +556,42 @@ export const MOCK_OBJECT_TYPE_WORKFLOWS: Record<number, ApiWorkflowResponse> = {
     },
   },
 };
+
+/* -------------------------------------------------------------------------- */
+/* Forms                                                                      */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Mirrors `/object/form`.
+ *
+ * Form 7001 is referenced by the Open state's permission row below; 7002 is
+ * deliberately unreferenced, and one permission row points at an id that is
+ * *not* here, so the "set but unresolvable" path is exercised rather than
+ * assumed.
+ */
+export const MOCK_FORMS: ApiForm[] = [
+  {
+    id: 7001,
+    name: '1.3 - Incident - Owner View',
+    description: null,
+    type: 1,
+    objectTypeId: 450001,
+    externalRefId: 'form-7001',
+  },
+  {
+    id: 7002,
+    name: '2.0 - Incident - Supervisor View',
+    description: null,
+    type: 1,
+    objectTypeId: 450001,
+    externalRefId: 'form-7002',
+  },
+  {
+    id: 7003,
+    name: 'Corrective Action - Create',
+    description: null,
+    type: 1,
+    objectTypeId: 450002,
+    externalRefId: 'form-7003',
+  },
+];

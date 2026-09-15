@@ -41,6 +41,8 @@ Per cache window (`CACHE_TTL_MS`, default 5 min):
   (role, object type) pair, plus the object type's exit requirements and its
   workflow definition — the latter two shared by every role, so they amortise.
   Reopening a drill-down is free.
+- **1** for the org-wide form catalog (`/object/form`), on the first drill-down
+  only — it resolves every form id everywhere.
 
 ## Running it
 
@@ -149,7 +151,7 @@ FALSE cannot pick up unverified rows. The per-object-type roll-ups
 object types without scanning states.
 
 Cost of one group, for R roles reaching T object types over P distinct
-(role, object type) pairs: `5 + R + P + 2T` upstream calls cold, 0 warm. The
+(role, object type) pairs: `5 + R + P + 2T + 1` upstream calls cold, 0 warm. The
 export adds no endpoint of its own; P is bounded by R x T, so the drill-down
 fan-out runs through `mapWithConcurrency` at `RESOLVER_MAX_CONCURRENCY`.
 

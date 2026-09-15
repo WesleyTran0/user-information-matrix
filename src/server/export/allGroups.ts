@@ -17,7 +17,7 @@
  *
  * So the export runs in two phases. The **plan** phase spends only the cheap,
  * shared calls (3 collection + 2 catalog + 1 per distinct role) and can then
- * state P exactly. The **fetch** phase spends P + 2T. A caller can stop after
+ * state P exactly. The **fetch** phase spends P + 2T + 1. A caller can stop after
  * the plan -- that is what `--dry-run` in the CLI does -- and decide whether
  * the number is acceptable before committing to it.
  */
@@ -152,8 +152,9 @@ export async function planAllGroupsExport(
       distinctPairs: pairs.size,
       distinctObjectTypes: objectTypes.size,
       // One permissions call per pair; exit requirements and the workflow
-      // definition are per object type and shared across every role.
-      estimatedRemainingCalls: pairs.size + objectTypes.size * 2,
+      // definition are per object type and shared across every role; plus one
+      // org-wide form catalog, fetched once however many pairs there are.
+      estimatedRemainingCalls: pairs.size + objectTypes.size * 2 + 1,
     },
     skipped,
   };

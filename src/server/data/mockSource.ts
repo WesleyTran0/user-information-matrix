@@ -1,4 +1,5 @@
 import type {
+  ApiForm,
   ApiGroupRole,
   ApiKeyedByGroupId,
   ApiObjectLifeCycle,
@@ -18,6 +19,7 @@ import {
   MOCK_OBJECT_TYPES,
   MOCK_ROLE_LIFE_CYCLE_PERMISSIONS,
   MOCK_ROLE_OBJECT_TYPE_PERMISSIONS,
+  MOCK_FORMS,
   MOCK_OBJECT_TYPE_WORKFLOWS,
   MOCK_STATE_REQUIREMENTS,
   MOCK_USER_GROUPS,
@@ -72,5 +74,9 @@ export class MockResolverSource implements ResolverDataSource {
 
   async fetchObjectTypeWorkflow(objectTypeId: number): Promise<ApiWorkflowResponse> {
     return clone(MOCK_OBJECT_TYPE_WORKFLOWS[objectTypeId] ?? {});
+  }
+
+  async fetchForms(): Promise<ApiForm[]> {
+    return clone(MOCK_FORMS);
   }
 }

@@ -168,6 +168,18 @@ export interface StateAccess extends LifeCycleState {
    * `ObjectTypeAccessDetail.triggersError`.
    */
   triggers: StateTrigger[];
+  /**
+   * The form this role is shown for this state.
+   *
+   * `null` means the permission row carried no form id, which is the Resolver
+   * UI's "Default" option -- the object type's own default form applies. What
+   * that default resolves to is not exposed by any endpoint reachable with
+   * this key, so it is reported as "Default" rather than guessed at.
+   *
+   * When a form *is* set but its id is not in the form catalog, `name` is null
+   * and only the id is known.
+   */
+  form: { id: number; name: string | null } | null;
 }
 
 /** One lifecycle of one object type, resolved for one role. */
@@ -250,6 +262,11 @@ export interface ObjectTypeAccessDetail extends ObjectTypeAccess {
    * ids are known, so the UI must not imply the list is complete.
    */
   triggersError: string | null;
+  /**
+   * Set when the form catalog could not be loaded, so a form that *is* set
+   * shows only its id. Distinct from a state legitimately using the default.
+   */
+  formsError: string | null;
 }
 
 export interface RoleAccess {
@@ -321,6 +338,8 @@ export interface ServerMeta {
   cachedRequirementCount: number;
   /** Cached per-object-type workflow definitions (trigger names). */
   cachedWorkflowCount: number;
+  /** Whether the org-wide form catalog has been loaded. */
+  cachedFormCatalog: boolean;
   /**
    * False when the catalog carried no lifecycle states at all -- the app then
    * cannot show state-level access, and says so instead of rendering 0/0.

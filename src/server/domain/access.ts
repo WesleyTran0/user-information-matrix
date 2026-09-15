@@ -155,6 +155,8 @@ export interface ReportedPermissions {
   requirementsByStateId: ReadonlyMap<LifeCycleStateId, StateRequirements>;
   /** Every trigger on each state, from the workflow definition. */
   triggersByStateId: ReadonlyMap<LifeCycleStateId, StateTrigger[]>;
+  /** Form id -> name, for the form a state pins for this role. */
+  formNameById: ReadonlyMap<number, string>;
   /** Rows the endpoint returned, so dropped rows can be detected. */
   rowCount: number;
   /** The lifecycle each returned row claimed. */
@@ -163,18 +165,21 @@ export interface ReportedPermissions {
   error: string | null;
   requirementsError: string | null;
   triggersError: string | null;
+  formsError: string | null;
 }
 
 const NO_REPORTED_PERMISSIONS: ReportedPermissions = {
   byStateId: new Map(),
   requirementsByStateId: new Map(),
   triggersByStateId: new Map(),
+  formNameById: new Map(),
   rowCount: 0,
   lifeCycleIdByStateId: new Map(),
   duplicateCount: 0,
   error: null,
   requirementsError: null,
   triggersError: null,
+  formsError: null,
 };
 
 export function buildObjectTypeAccessDetail(
@@ -211,6 +216,12 @@ export function buildObjectTypeAccessDetail(
         permission,
         requirements: reported.requirementsByStateId.get(state.id) ?? null,
         triggers: mergeStateTriggers(reported.triggersByStateId.get(state.id), permission),
+        // A null formId is the UI's "Default" option, not missing data, so it
+        // stays null rather than becoming a name we invented.
+        form:
+          permission === null || permission.formId === null
+            ? null
+            : { id: permission.formId, name: reported.formNameById.get(permission.formId) ?? null },
       };
     });
     lifeCycles.push({
@@ -246,6 +257,7 @@ export function buildObjectTypeAccessDetail(
     permissionsError: reported.error,
     requirementsError: reported.requirementsError,
     triggersError: reported.triggersError,
+    formsError: reported.formsError,
   };
 }
 
