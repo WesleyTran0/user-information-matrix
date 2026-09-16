@@ -352,3 +352,134 @@ headers = {
 
 response = requests.get(group_url, headers=headers, timeout=30)
 `
+
+---
+
+# Project state (handoff, written 09/16)
+
+Everything above is the original spec. This section is what a new session needs
+to know before touching anything. `update.md` (also in the repo) documents the
+per-state permission endpoints added after the original spec.
+
+**Next session's focus: the Excel output — the information it carries, and how
+it looks.** Start from "Open questions for the Excel work" at the bottom.
+
+## What exists
+
+- **Web UI** — pick a user group → its roles → the object types each role
+  reaches → click one for a per-state table (access, capabilities, triggers,
+  form). `npm run dev` (API, :8787) + `npm run dev:client` (UI, :5173).
+- **Per-group export** — "Export to Excel" button in the UI. Two sheets:
+  `Summary`, `Permission Matrix`. Route: `GET /api/groups/:groupId/export`.
+- **Master export** — `npm run export:all`. Three sheets: `Overview`,
+  `User Groups`, `Permissions`. Flags: `--dry-run`, `--limit N`,
+  `--groups 1,2,3`, `--out PATH`.
+- **`process.md`** — a gitignored manual runbook for reproducing the master
+  workbook by hand with curl. Keep it in step with any change to the flow.
+
+Layout: `src/shared/types/domain.ts` is the only thing the client may see;
+raw wire DTOs live in `src/server/types/resolver-api.ts` and must not leak past
+`src/server/domain/normalize.ts`. Export code is `src/server/export/`, and the
+whole column set is one array in `columns.ts` — adding a column is one
+descriptor there and it lands in *both* workbooks.
+
+## Endpoints in use beyond the original spec
+
+| Endpoint | Gives |
+|---|---|
+| `/data/rolePermissions/role/{r}/objectType/{o}` | per-state access for one pair (UI drill-down) |
+| `/data/rolePermissions` (no params) | **every** permission row in the org, one call — used by the master export |
+| `/object/objectType/{o}/objectLifeCycle/state?deep=true` | states, trigger **names**, transitions |
+| `/object/objectType/{o}/objectLifeCycle/stateRequired` | what each state requires to exit |
+| `/object/form` | form id → name, whole org in one call |
+
+## Semantics that are easy to get wrong
+
+- `permission`: **0 = none, 1 = read, 2 = read and edit**. Inferred from
+  observation, not documented. Anything else is `unknown` — never round it to
+  "no access".
+- `canManageRole` means *manage this object type while it is in this state*,
+  not manage a role. It is labelled **Can Manage**.
+- `formId: null` means the UI's **Default** option. What the default resolves to
+  is not exposed anywhere — do not try to name it.
+- **Lifecycles a role has no permission row in at all are dropped** from the
+  export: an object type commonly owns lifecycles from unrelated processes.
+  Only drop when the call *succeeded* — dropping on failure turns an outage
+  into a confident "not relevant".
+- **A missing row inside a lifecycle that has rows for other states means
+  `none`**, with the `Can` cells FALSE. The API does omit the occasional state
+  and Resolver's own UI shows it alongside the rest. `unreported` should never
+  appear in output.
+- **Blank is not FALSE.** Blank = the call failed, nobody knows. FALSE = the API
+  said no. Writing FALSE for both makes `Can Edit = FALSE` filters unsafe.
+- **Names are not unique** — group, object type and lifecycle names all collide
+  in this tenant. Always carry and key on ids. Two separate analyses of mine
+  were wrong from keying on names.
+- Two endpoints are **not** `{data}`-enveloped: `stateRequired` and
+  `objectLifeCycle/state`. `?deep=true` is a no-op on `stateRequired` and
+  load-bearing on `state`.
+- There is **no "ALL STATES" permission row.** Every row in the org has a
+  concrete state id; that UI entry is a bulk-edit control. Do not go looking.
+
+## Export shape
+
+`Permissions` / `Permission Matrix` is 21 columns, left to right:
+
+Group · Group Id · Role · Role Id · Object Type · Object Type Id · Lifecycle ·
+Lifecycle Id · State · Access · Can Read · Can Edit · Can Create · Can Delete ·
+Can Merge · Can Manage · Can Bulk Launch · # Triggers Granted ·
+# Triggers Available · Triggers Granted · Form
+
+`Access` is one word: `edit` / `read` / `none` / `unavailable` / `unknown`.
+Booleans are written as real booleans, and the header is a single row, because
+the sheet is meant to be a PivotTable source.
+
+## Measured cost (live tenant, 09/15)
+
+207 groups · 205 roles · 186 object types · 2,044 (role, object type) pairs →
+**584 calls, ~22s, 196,860 rows, 12.6 MB**, peak memory 3,752 MB.
+
+The bulk permissions endpoint replaced 2,044 per-pair calls with 1. exceljs
+materialises the whole workbook before writing, so peak memory tracks row
+count; it fits under Node's ~4 GB default now, but **if rows grow much past
+this, switch to exceljs's streaming `WorkbookWriter`** rather than raising the
+heap. Excel's own limit is 1,048,576 rows (currently at 19%).
+
+## Working practices for this repo
+
+- Run the **single affected** check suite while iterating
+  (`check:data` / `check:render` / `check:live-path` / `check:dev-server` /
+  `check:export`); run the full `npm run check` once before committing. The
+  full run spawns servers and takes minutes.
+- Use the **senior-code-reviewer** agent after each feature milestone, before
+  the `review:` commit. It has found real bugs every round — including one
+  where the export silently discarded reported permissions.
+- `.env` holds `DATA_SOURCE=live|mock` and the key; it is gitignored and must
+  stay that way. `exports/` and `process.md` are gitignored too.
+- **This repo is public.** No live group names, role names or ids in committed
+  files — fixtures and samples use invented people on `@example.com`.
+- Environment notes: shell is zsh (no word-splitting on unquoted vars), there
+  is no `lsof` (use `ss -lptnH "sport = :PORT"`), and Node 26 runs `.ts`
+  directly so the check scripts need no build.
+
+## Open questions for the Excel work
+
+Nothing here is decided — these are the known seams:
+
+1. **Appearance.** Only the header row is styled (bold, grey fill, frozen) plus
+   autofilter and column widths. Untouched: conditional formatting on `Access`
+   or the `Can` columns, number formats, zebra striping, per-sheet tab colours.
+2. **`Summary` vs `Overview`.** The per-group workbook's `Summary` sheet rolls
+   up one line per (role, object type) with state counts by level. The master
+   workbook has no equivalent roll-up — only the flat `Permissions` sheet and
+   the per-group `User Groups` stats. A cross-group roll-up may be the most
+   useful missing thing.
+3. **Rows a reader may still find surprising**: rows where `State` is blank
+   (a role that reaches nothing, an unattributable grant, or an object type
+   with no lifecycles). They carry an explanatory `note` internally, but the
+   `note` column was removed from the agreed 21.
+4. **`# Triggers Available`** counts every trigger on the state, which for a
+   busy workflow is large (24 on one state) and may read oddly next to a
+   granted count of 3.
+5. Per-group and master exports share `MATRIX_COLUMNS`, so column changes hit
+   both. If they should diverge, that is a deliberate decision to make.
